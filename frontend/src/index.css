@@ -1,0 +1,605 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+:root {
+  --bg: #000000;
+  --panel: #111111;
+  --panel-hover: #1a1a1a;
+  --border: #222222;
+  --border-light: #333333;
+  --text: #ffffff;
+  --text-muted: #888888;
+  --text-dim: #555555;
+
+  --buy: #00c853;
+  --sell: #ff1744;
+  --hold: #ffc400;
+
+  --step-done: #ffffff;
+  --step-active: #ffffff;
+  --step-pending: #333333;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── App Shell ────────────────────────────────────── */
+
+.app {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem;
+}
+
+/* ── Select Input ─────────────────────────────────── */
+
+.select-input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.65rem 0.85rem;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.9rem;
+  transition: border-color 0.15s;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  padding-right: 2rem;
+}
+
+.select-input:focus {
+  outline: none;
+  border-color: #fff;
+}
+
+.select-input option {
+  background: #111;
+  color: #fff;
+}
+
+/* ── Back Button ──────────────────────────────────── */
+
+.btn-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.4rem 0.85rem;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-bottom: 1rem;
+}
+
+.btn-back:hover {
+  color: var(--text);
+  border-color: var(--border-light);
+}
+
+/* ── Stats Bar ────────────────────────────────────── */
+
+.stats-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 1rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  flex-wrap: wrap;
+}
+
+.stat-sep { color: var(--border-light); }
+
+.stat-flagged {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--hold);
+}
+
+.stat-time { color: var(--text-dim); }
+
+.btn-filter {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.3rem 0.7rem;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-filter:hover { border-color: var(--border-light); color: var(--text); }
+.btn-filter.active { background: rgba(255,255,255,0.08); color: var(--text); border-color: var(--border-light); }
+
+/* ── Stock Table ──────────────────────────────────── */
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.stock-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.stock-table thead {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  z-index: 1;
+}
+
+.stock-table th {
+  padding: 0.65rem 0.75rem;
+  text-align: right;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.th-left { text-align: left; }
+
+.stock-table td {
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.stock-row {
+  transition: background 0.1s;
+}
+
+.stock-row:hover {
+  background: var(--panel-hover);
+}
+
+.row-flagged {
+  background: rgba(255, 196, 0, 0.03);
+}
+
+.row-flagged:hover {
+  background: rgba(255, 196, 0, 0.06);
+}
+
+.td-symbol { text-align: left; }
+
+.symbol-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.td-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.txt-green { color: var(--buy); }
+.txt-red { color: var(--sell); }
+
+.td-flags {
+  max-width: 200px;
+}
+
+.flag-tag {
+  display: inline-block;
+  padding: 0.15rem 0.45rem;
+  background: rgba(255, 196, 0, 0.1);
+  border: 1px solid rgba(255, 196, 0, 0.2);
+  border-radius: 4px;
+  font-size: 0.65rem;
+  color: var(--hold);
+  margin: 0.1rem 0.15rem;
+  white-space: nowrap;
+}
+
+.btn-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.3rem 0.65rem;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.btn-go:hover {
+  color: var(--text);
+  border-color: #fff;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* ── Header ───────────────────────────────────────── */
+
+.header {
+  margin-bottom: 2.5rem;
+}
+
+.header h1 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--text);
+}
+
+.header h1 span {
+  font-weight: 300;
+  color: var(--text-muted);
+}
+
+.header p {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  margin-top: 0.25rem;
+}
+
+/* ── Input Bar ────────────────────────────────────── */
+
+.input-bar {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-end;
+  padding: 1.25rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-bottom: 2rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  flex: 1;
+}
+
+.field label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.field input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.65rem 0.85rem;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.9rem;
+  transition: border-color 0.15s;
+}
+
+.field input:focus {
+  outline: none;
+  border-color: #fff;
+}
+
+.btn-analyse {
+  background: #fff;
+  color: #000;
+  border: none;
+  border-radius: 8px;
+  padding: 0.65rem 1.5rem;
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.btn-analyse:hover:not(:disabled) {
+  background: #e0e0e0;
+}
+
+.btn-analyse:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Progress Stepper ─────────────────────────────── */
+
+.stepper {
+  padding: 1.5rem 1.25rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-bottom: 2rem;
+}
+
+.stepper-title {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  margin-bottom: 1rem;
+}
+
+.stepper-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 0.5rem;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-dim);
+  transition: all 0.3s ease;
+}
+
+.step.done {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.step.active {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.step-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--step-pending);
+  flex-shrink: 0;
+  transition: all 0.3s ease;
+}
+
+.step.done .step-dot {
+  background: var(--step-done);
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.3);
+}
+
+.step.active .step-dot {
+  background: var(--step-active);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
+}
+
+/* ── Decision Badge ───────────────────────────────── */
+
+.decision-section {
+  text-align: center;
+  padding: 2.5rem 1.25rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-bottom: 2rem;
+}
+
+.decision-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+  margin-bottom: 1rem;
+}
+
+.decision-badge {
+  display: inline-block;
+  font-size: 2.5rem;
+  font-weight: 800;
+  padding: 0.6rem 2.5rem;
+  border-radius: 100px;
+  letter-spacing: 0.04em;
+}
+
+.decision-BUY {
+  color: var(--buy);
+  border: 2px solid var(--buy);
+  background: rgba(0, 200, 83, 0.08);
+}
+
+.decision-SELL {
+  color: var(--sell);
+  border: 2px solid var(--sell);
+  background: rgba(255, 23, 68, 0.08);
+}
+
+.decision-HOLD {
+  color: var(--hold);
+  border: 2px solid var(--hold);
+  background: rgba(255, 196, 0, 0.08);
+}
+
+.decision-OVERWEIGHT {
+  color: var(--buy);
+  border: 2px solid var(--buy);
+  background: rgba(0, 200, 83, 0.08);
+}
+
+.decision-UNDERWEIGHT {
+  color: var(--sell);
+  border: 2px solid var(--sell);
+  background: rgba(255, 23, 68, 0.08);
+}
+
+.decision-ticker {
+  font-size: 0.95rem;
+  color: var(--text-muted);
+  margin-top: 0.75rem;
+}
+
+/* ── Report Accordion ──────────────────────────────── */
+
+.reports {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.report {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.report-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.85rem 1.25rem;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
+}
+
+.report-header:hover {
+  background: var(--panel-hover);
+}
+
+.report-header h3 {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.report-toggle {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  transition: transform 0.2s;
+}
+
+.report-toggle.open {
+  transform: rotate(180deg);
+}
+
+.report-body {
+  padding: 0 1.25rem 1.25rem;
+  font-size: 0.82rem;
+  line-height: 1.7;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  border-top: 1px solid var(--border);
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.report-body::-webkit-scrollbar {
+  width: 4px;
+}
+
+.report-body::-webkit-scrollbar-thumb {
+  background: var(--border-light);
+  border-radius: 4px;
+}
+
+/* ── Error ─────────────────────────────────────────── */
+
+.error-box {
+  padding: 1rem 1.25rem;
+  background: rgba(255, 23, 68, 0.08);
+  border: 1px solid rgba(255, 23, 68, 0.3);
+  border-radius: 12px;
+  color: var(--sell);
+  font-size: 0.85rem;
+  margin-bottom: 2rem;
+}
+
+/* ── Empty State ───────────────────────────────────── */
+
+.empty {
+  text-align: center;
+  padding: 4rem 1rem;
+  color: var(--text-dim);
+}
+
+.empty p {
+  font-size: 0.9rem;
+}
+
+/* ── Responsive ────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  .input-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .stepper-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .decision-badge {
+    font-size: 1.8rem;
+    padding: 0.5rem 1.5rem;
+  }
+}
+
+/* ── Spin animation for loader icon ────────────────── */
+
+.spin-icon {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
