@@ -2,6 +2,7 @@
 
 import { Search, Loader2 } from 'lucide-react'
 import StockTable from './StockTable'
+import SchedulerCard from './SchedulerCard'
 import type { ScreenResult, Stock } from '../types'
 
 interface ScreenerViewProps {
@@ -31,6 +32,9 @@ export default function ScreenerView({
 }: ScreenerViewProps) {
   return (
     <>
+      {/* Scheduler status card */}
+      <SchedulerCard />
+
       <div className="page-header">
         <h1>NSE <em>Market Scanner</em></h1>
         <p>Select an index, scan live stock data, and launch AI deep analysis on flagged stocks.</p>

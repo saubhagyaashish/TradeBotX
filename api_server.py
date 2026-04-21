@@ -6,6 +6,7 @@ import queue
 import threading
 from typing import List
 from datetime import date as dt_date
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,8 +19,20 @@ load_dotenv()
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.dataflows.nse_api import get_index_stocks, screen_stocks, SUPPORTED_INDICES
+import scheduler as sched
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Start the scheduler on startup and shut it down cleanly on exit."""
+    sched.start_scheduler()
+    logging.info("Scheduler initialised")
+    yield
+    sched.stop_scheduler()
+    logging.info("Scheduler stopped")
+
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -547,6 +560,75 @@ async def analyze_batch(request: BatchAnalyzeRequest):
             yield f"data: {json.dumps(event)}\n\n"
 
     return StreamingResponse(_event_generator(), media_type="text/event-stream")
+
+
+# ---------------------------------------------------------------------------
+# Scheduler endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/scheduler/status")
+async def scheduler_status():
+    """Return scheduler state: enabled, next run time, last run summary."""
+    return sched.get_status()
+
+
+@app.get("/api/scheduler/config")
+async def get_scheduler_config():
+    """Return current scheduler configuration."""
+    return sched.load_config()
+
+
+class SchedulerConfigBody(BaseModel):
+    enabled: bool | None = None
+    scan_time_ist: str | None = None
+    watchlist_source: str | None = None
+    index_name: str | None = None
+    max_stocks_to_analyse: int | None = None
+    pct_threshold: float | None = None
+    rsi_oversold: float | None = None
+    rsi_overbought: float | None = None
+    volume_spike_multiplier: float | None = None
+    only_analyse_flagged: bool | None = None
+
+
+@app.post("/api/scheduler/config")
+async def update_scheduler_config(body: SchedulerConfigBody):
+    """Update scheduler config and reschedule immediately."""
+    cfg = sched.load_config()
+    updates = body.model_dump(exclude_none=True)
+    cfg.update(updates)
+    sched.save_config(cfg)
+    sched.reschedule(cfg)
+    return cfg
+
+
+@app.post("/api/scheduler/run-now")
+async def run_now():
+    """
+    Trigger an immediate pre-market scan in a background thread.
+    Returns immediately — poll /api/scheduler/status for progress.
+    """
+    if sched._scan_running:
+        raise HTTPException(status_code=409, detail="Scan already running")
+
+    def _bg():
+        sched.run_morning_scan(trigger="manual")
+
+    threading.Thread(target=_bg, daemon=True).start()
+    return {"message": "Scan started", "trigger": "manual"}
+
+
+@app.get("/api/morning-report")
+async def get_morning_report():
+    """Return the most recent morning scan report."""
+    from scheduler import REPORT_FILE
+    if not REPORT_FILE.exists():
+        return {"report": None}
+    try:
+        data = json.loads(REPORT_FILE.read_text(encoding="utf-8"))
+        return {"report": data}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 if __name__ == "__main__":

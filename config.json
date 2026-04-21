@@ -1,0 +1,14 @@
+{
+  "scheduler": {
+    "enabled": true,
+    "scan_time_ist": "08:30",
+    "watchlist_source": "custom",
+    "index_name": "NIFTY 50",
+    "max_stocks_to_analyse": 5,
+    "pct_threshold": 2.0,
+    "rsi_oversold": 32.0,
+    "rsi_overbought": 68.0,
+    "volume_spike_multiplier": 2.0,
+    "only_analyse_flagged": true
+  }
+}

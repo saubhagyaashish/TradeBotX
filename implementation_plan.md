@@ -139,22 +139,25 @@ We evaluated [tradingview-mcp](https://github.com/atilaahmettaner/tradingview-mc
 
 ---
 
-### Phase 3: Scheduled Scanning ⏱️ ~2-3 hours
+### Phase 3: Scheduled Scanning ✅ DONE
 
-**Goal**: The agent automatically scans your watchlist every morning before market opens (e.g., 8:30 AM IST).
+**Goal**: The agent automatically scans your watchlist every morning before market opens.
 
 | Task | Details | Status |
 |---|---|---|
-| Background scheduler | Use `APScheduler` or a simple `asyncio` loop in the backend | ⏳ |
-| Pre-market scan | At 8:30 AM: run screener → run pipeline on flagged stocks | ⏳ |
-| Store results | Save to `results/` directory with timestamp | ⏳ |
-| UI: "Morning Report" view | Show today's pre-market scan results as a dashboard card | ⏳ |
-| Config | Set scan time, watchlist, and screening thresholds in `config.json` | ⏳ |
+| Background scheduler | `APScheduler 3.11.2` with `BackgroundScheduler` + `CronTrigger` at IST time | ✅ Done |
+| Pre-market scan | Runs screener (index source) or pipeline directly (custom watchlist) on configured tickers | ✅ Done |
+| Store results | Writes `morning_report.json` + standard `results/` directory via `_log_state()` | ✅ Done |
+| UI: Scheduler Card | `SchedulerCard.tsx` at top of Screener — live dot, next/last run, shimmer bar when running, rating chips, inline config panel | ✅ Done |
+| Config | `config.json` — scan time, watchlist source, RSI/volume thresholds, max stocks, enabled flag | ✅ Done |
 
-**Files to create/modify**:
-- [api_server.py](file:///d:/TradingAgents/api_server.py) — add scheduler integration
-- New: `scheduler.py` — background scanning loop
-- New: `config.json` — scheduler settings
+**Files created/modified**:
+- `config.json` — **[NEW]** default scheduler settings
+- [scheduler.py](file:///c:/TradeBotX/scheduler.py) — **[NEW]** APScheduler loop, scan runner, `morning_report.json` writer
+- [api_server.py](file:///c:/TradeBotX/api_server.py) — lifespan startup/shutdown + 5 endpoints: `GET/POST /api/scheduler/config`, `GET /api/scheduler/status`, `POST /api/scheduler/run-now`, `GET /api/morning-report`
+- [SchedulerCard.tsx](file:///c:/TradeBotX/frontend/src/components/SchedulerCard.tsx) — **[NEW]** self-contained status + control card (polls every 3-15s)
+- [ScreenerView.tsx](file:///c:/TradeBotX/frontend/src/components/ScreenerView.tsx) — `SchedulerCard` embedded at top
+- [index.css](file:///c:/TradeBotX/frontend/src/index.css) — scheduler card styles (shimmer animation, dot states, config panel)
 
 ---
 
@@ -255,8 +258,8 @@ This phase would add a new data vendor in `dataflows/` alongside yfinance.
 |---|---|---|---|
 | **1. Fix Foundation** (`/api/results` + screener upgrade) | 1h | 🔴 Critical blocker | ✅ Done |
 | **2. Watchlist + Batch Analysis** | 2h | 🔴 Essential | ✅ Done |
-| 3. Scheduled Scanning | 2-3h | 🟡 High | **Next** |
-| 4. Prediction Tracking | 3-4h | 🟡 High | Queued |
+| **3. Scheduled Scanning** | 2-3h | 🟡 High | ✅ Done |
+| 4. Prediction Tracking | 3-4h | 🟡 High | **Next** |
 | 5. Alerts (Telegram) | 2-3h | 🟢 Nice to have | Later |
 | 6. Live Data (Broker API) | 5+h | 🟢 Advanced | Later |
 
@@ -268,5 +271,6 @@ This phase would add a new data vendor in `dataflows/` alongside yfinance.
 - ✅ Results history — full end-to-end (backend + frontend)
 - ✅ Custom watchlist with persistence (`watchlists.json`)
 - ✅ Batch analysis with live SSE progress per ticker
+- ✅ APScheduler pre-market scan at configurable IST time with `SchedulerCard` UI
 
-**Total remaining effort**: ~10-13 hours for Phases 3-5
+**Total remaining effort**: ~6-8 hours for Phases 4-5
