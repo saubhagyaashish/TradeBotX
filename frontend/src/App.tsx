@@ -7,6 +7,7 @@ import TopNav from './components/TopNav'
 import ScreenerView from './components/ScreenerView'
 import AnalysisView from './components/AnalysisView'
 import ResultsView from './components/ResultsView'
+import WatchlistPanel from './components/WatchlistPanel'
 import type { Stock, ScreenResult, AnalysisResult, View } from './types'
 
 const API = 'http://localhost:8000'
@@ -116,7 +117,7 @@ export default function App() {
   }, [])
 
   // ── Nav link clicks ────────────────────────────────────────────────
-  const handleNav = useCallback((v: 'screener' | 'results') => {
+  const handleNav = useCallback((v: 'screener' | 'results' | 'watchlist') => {
     eventSourceRef.current?.close()
     setView(v)
   }, [])
@@ -128,6 +129,8 @@ export default function App() {
 
       {view === 'results' ? (
         <ResultsView />
+      ) : view === 'watchlist' ? (
+        <WatchlistPanel />
       ) : view === 'screener' ? (
         <ScreenerView
           indices={indices}

@@ -31,7 +31,29 @@ export interface AnalysisResult {
   reports: Record<string, string>
 }
 
-export type View = 'screener' | 'analysis' | 'results'
+export type View = 'screener' | 'analysis' | 'results' | 'watchlist'
+
+export interface CustomWatchlist {
+  tickers: string[]
+}
+
+export type TickerStatus = 'queued' | 'running' | 'done' | 'error'
+
+export interface BatchTickerState {
+  ticker: string
+  status: TickerStatus
+  currentAgent?: string
+  rating?: string
+  decision?: string
+  error?: string
+}
+
+export interface BatchState {
+  running: boolean
+  done: boolean
+  total: number
+  items: BatchTickerState[]
+}
 
 export interface ResultEntry {
   ticker: string

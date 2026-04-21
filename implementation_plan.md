@@ -46,7 +46,11 @@
 | `GET` | `/api/screen?index=NIFTY 50` | ✅ Working |
 | `GET` | `/api/analyze/stream?ticker=X&date=Y` | ✅ Working (SSE) |
 | `POST` | `/api/analyze` | ✅ Working (fallback) |
-| `GET` | `/api/results` | ❌ **Missing — ResultsView calls this but it doesn't exist yet** |
+| `GET` | `/api/results` | ✅ Working |
+| `GET` | `/api/watchlist/custom` | ✅ Working — returns `watchlists.json` |
+| `POST` | `/api/watchlist/custom` | ✅ Working — adds ticker, persists to `watchlists.json` |
+| `DELETE` | `/api/watchlist/custom/{ticker}` | ✅ Working — removes ticker |
+| `POST` | `/api/analyze/batch` | ✅ Working (SSE) — streams per-ticker progress |
 
 ### Result File Format (saved by `_log_state()`)
 
@@ -68,10 +72,10 @@ Results are saved to `results/<TICKER>/TradingAgentsStrategy_logs/full_states_lo
 ```
 
 ### Current Limitations
-- ❌ No `GET /api/results` endpoint — **ResultsView UI is built but backend is missing** ← immediate fix needed
-- ❌ Screener only checks price % change and 52-week proximity — **no RSI or volume spike detection**
-- ❌ No custom watchlist management (add/remove tickers) — only predefined index lists
-- ❌ No batch analysis — can only run one stock at a time
+- ✅ ~~No `GET /api/results` endpoint~~ — now implemented, reads from `results/` directory
+- ✅ ~~Screener only checks price % change and 52-week proximity~~ — `tradingview-ta` installed, RSI + volume spike rules active
+- ✅ ~~No custom watchlist management~~ — `watchlists.json` persistence + full CRUD API + `WatchlistPanel` UI
+- ✅ ~~No batch analysis~~ — `POST /api/analyze/batch` SSE endpoint with live progress
 - ❌ No scheduled/automatic scanning
 - ❌ No prediction history or accuracy tracking
 - ❌ No alerts or notifications
@@ -95,37 +99,43 @@ We evaluated [tradingview-mcp](https://github.com/atilaahmettaner/tradingview-mc
 
 ## 3. What We Are Going to Build
 
-### Phase 1: Complete the Foundation ⏱️ ~1 hour — 🔴 DO THIS FIRST
+### Phase 1: Complete the Foundation ✅ DONE
 
 **Goal**: Fix the broken `GET /api/results` endpoint and add the missing screener indicators.
 
 | Task | Details | Status |
 |---|---|---|
-| `GET /api/results` endpoint | Scan `results/` directory, parse JSON logs, return `[{ticker, date, rating, reports}]` | ❌ Blocked |
-| Upgrade screener with `tradingview-ta` | Add RSI, MACD, volume indicators to screening. Flag RSI < 30 or > 70, volume spikes | ❌ Not started |
+| `GET /api/results` endpoint | Scan `results/` directory, parse JSON logs, return `[{ticker, date, rating, reports}]` | ✅ Done |
+| Upgrade screener with `tradingview-ta` | RSI, volume spike detection via `tradingview-ta 3.3.0`. Flags RSI < 32 or > 68, volume > 2× SMA20 | ✅ Done |
 | Auto-date in analysis | Default to today's date when triggering analysis | ✅ Done (App.tsx line 74) |
 
-**Files to modify**:
-- [api_server.py](file:///d:/TradingAgents/api_server.py) — add `GET /api/results` endpoint
-- [nse_api.py](file:///d:/TradingAgents/tradingagents/dataflows/nse_api.py) — integrate `tradingview-ta` for RSI/volume screening
+**Files modified**:
+- [api_server.py](file:///c:/TradeBotX/api_server.py) — `GET /api/results` already implemented
+- [nse_api.py](file:///c:/TradeBotX/tradingagents/dataflows/nse_api.py) — `tradingview-ta` integration already written; installed package `tradingview-ta 3.3.0`
 
 ---
 
-### Phase 2: Watchlist Management + Batch Analysis ⏱️ ~2 hours
+### Phase 2: Watchlist Management + Batch Analysis ✅ DONE
 
 **Goal**: Manage custom watchlists and analyse multiple stocks with one click.
 
 | Task | Details | Status |
 |---|---|---|
-| Custom watchlist UI | Add/remove individual tickers beyond predefined indices | ⏳ |
-| Backend batch endpoint | `POST /api/analyze/batch` — accepts list of tickers, streams progress per ticker | ⏳ |
-| UI: batch progress | Show "Analysing 3/10: TCS.NS" progress bar | ⏳ |
-| Persist custom watchlists | Save user-created watchlists to `watchlists.json` | ⏳ |
+| Custom watchlist UI | `WatchlistPanel.tsx` — add/remove tickers, delete button per row, live count badge | ✅ Done |
+| Backend CRUD endpoints | `GET/POST/DELETE /api/watchlist/custom` — reads/writes `watchlists.json` | ✅ Done |
+| Backend batch SSE endpoint | `POST /api/analyze/batch` — runs pipeline per ticker, streams `ticker_start / progress / ticker_result / batch_done` | ✅ Done |
+| UI: batch progress | Animated progress bar, per-ticker rows showing status icon + live agent name + rating badge on completion | ✅ Done |
+| Persist custom watchlists | `watchlists.json` written atomically on every add/remove | ✅ Done |
+| TopNav: Watchlist tab | Added between Screener and Results in `TopNav.tsx` | ✅ Done |
 
-**Files to create/modify**:
-- [api_server.py](file:///d:/TradingAgents/api_server.py) — new batch SSE endpoint
-- [App.tsx](file:///d:/TradingAgents/frontend/src/App.tsx) — watchlist management UI
-- New: `watchlists.json` — user custom ticker lists
+**Files created/modified**:
+- [api_server.py](file:///c:/TradeBotX/api_server.py) — watchlist CRUD + batch SSE endpoint
+- [WatchlistPanel.tsx](file:///c:/TradeBotX/frontend/src/components/WatchlistPanel.tsx) — **[NEW]** full watchlist + batch UI
+- [TopNav.tsx](file:///c:/TradeBotX/frontend/src/components/TopNav.tsx) — added Watchlist nav link
+- [App.tsx](file:///c:/TradeBotX/frontend/src/App.tsx) — routed `view === 'watchlist'` to `WatchlistPanel`
+- [types.ts](file:///c:/TradeBotX/frontend/src/types.ts) — added `CustomWatchlist`, `BatchTickerState`, `BatchState` types
+- [index.css](file:///c:/TradeBotX/frontend/src/index.css) — watchlist card, ticker list, batch progress bar + item row styles
+- `watchlists.json` — **[NEW]** auto-created on first add
 
 ---
 
@@ -243,18 +253,20 @@ This phase would add a new data vendor in `dataflows/` alongside yfinance.
 
 | Phase | Effort | Value | Status |
 |---|---|---|---|
-| **1. Fix Foundation** (`/api/results` + screener upgrade) | 1h | 🔴 Critical blocker | **Next** |
-| 2. Watchlist + Batch Analysis | 2h | 🔴 Essential | Queued |
-| 3. Scheduled Scanning | 2-3h | 🟡 High | Queued |
+| **1. Fix Foundation** (`/api/results` + screener upgrade) | 1h | 🔴 Critical blocker | ✅ Done |
+| **2. Watchlist + Batch Analysis** | 2h | 🔴 Essential | ✅ Done |
+| 3. Scheduled Scanning | 2-3h | 🟡 High | **Next** |
 | 4. Prediction Tracking | 3-4h | 🟡 High | Queued |
 | 5. Alerts (Telegram) | 2-3h | 🟢 Nice to have | Later |
 | 6. Live Data (Broker API) | 5+h | 🟢 Advanced | Later |
 
 ### What's Already Done
-- ✅ NSE index screener (price + 52-week flagging)
-- ✅ Full React dashboard with 3-view routing
+- ✅ NSE index screener (price + 52-week + RSI + volume spike flagging via `tradingview-ta`)
+- ✅ Full React dashboard with 4-view routing (Screener / Watchlist / Analysis / Results)
 - ✅ SSE streaming analysis pipeline
 - ✅ Auto-date (uses today's date)
-- ✅ Results history UI (frontend only — backend API missing)
+- ✅ Results history — full end-to-end (backend + frontend)
+- ✅ Custom watchlist with persistence (`watchlists.json`)
+- ✅ Batch analysis with live SSE progress per ticker
 
-**Total remaining effort**: ~15-18 hours for Phases 1-5
+**Total remaining effort**: ~10-13 hours for Phases 3-5

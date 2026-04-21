@@ -4,8 +4,10 @@ import asyncio
 import logging
 import queue
 import threading
+from typing import List
+from datetime import date as dt_date
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -361,6 +363,190 @@ async def analyze_stock(request: AnalyzeRequest):
     except Exception as e:
         logging.error(f"Error during agent execution: {e}")
         return {"error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# Custom Watchlist CRUD
+# ---------------------------------------------------------------------------
+
+WATCHLISTS_FILE = Path("watchlists.json")
+
+
+def _load_watchlists() -> dict:
+    """Load custom watchlists from disk. Returns {"tickers": [...]}"""
+    if WATCHLISTS_FILE.exists():
+        try:
+            return json.loads(WATCHLISTS_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {"tickers": []}
+
+
+def _save_watchlists(data: dict) -> None:
+    WATCHLISTS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+@app.get("/api/watchlist/custom")
+async def get_custom_watchlist():
+    """Return the user's custom watchlist."""
+    return _load_watchlists()
+
+
+class TickerBody(BaseModel):
+    ticker: str
+
+
+@app.post("/api/watchlist/custom")
+async def add_to_watchlist(body: TickerBody):
+    """Add a ticker to the custom watchlist (e.g. 'INFY.NS')."""
+    ticker = body.ticker.strip().upper()
+    if not ticker:
+        raise HTTPException(status_code=400, detail="ticker is required")
+    data = _load_watchlists()
+    if ticker not in data["tickers"]:
+        data["tickers"].append(ticker)
+        _save_watchlists(data)
+    return data
+
+
+@app.delete("/api/watchlist/custom/{ticker}")
+async def remove_from_watchlist(ticker: str):
+    """Remove a ticker from the custom watchlist."""
+    data = _load_watchlists()
+    ticker = ticker.upper()
+    data["tickers"] = [t for t in data["tickers"] if t != ticker]
+    _save_watchlists(data)
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Batch analysis SSE endpoint
+# ---------------------------------------------------------------------------
+
+class BatchAnalyzeRequest(BaseModel):
+    tickers: List[str]
+
+
+@app.post("/api/analyze/batch")
+async def analyze_batch(request: BatchAnalyzeRequest):
+    """
+    SSE endpoint that runs the agent pipeline sequentially for each ticker
+    and streams per-ticker progress + results.
+
+    Events:
+      {type: 'batch_start',   total: N}
+      {type: 'ticker_start',  ticker: X, index: i, total: N}
+      {type: 'progress',      ticker: X, agent: Y, status: 'done'}
+      {type: 'ticker_result', ticker: X, index: i, total: N, decision: ..., rating: ...}
+      {type: 'ticker_error',  ticker: X, index: i, error: ...}
+      {type: 'batch_done'}
+    """
+    tickers = [t.strip().upper() for t in request.tickers if t.strip()]
+    if not tickers:
+        raise HTTPException(status_code=400, detail="No tickers provided")
+
+    today = str(dt_date.today())
+    event_queue: queue.Queue = queue.Queue()
+
+    def _run_batch():
+        event_queue.put({"type": "batch_start", "total": len(tickers)})
+        for i, ticker in enumerate(tickers):
+            event_queue.put({
+                "type": "ticker_start",
+                "ticker": ticker,
+                "index": i,
+                "total": len(tickers),
+            })
+            try:
+                config = DEFAULT_CONFIG.copy()
+                config["deep_think_llm"] = "gpt-5.4-mini"
+                config["quick_think_llm"] = "gpt-5.4-mini"
+                config["max_debate_rounds"] = 1
+                config["data_vendors"] = {
+                    "core_stock_apis": "yfinance",
+                    "technical_indicators": "yfinance",
+                    "fundamental_data": "yfinance",
+                    "news_data": "yfinance",
+                }
+
+                ta = TradingAgentsGraph(debug=True, config=config)
+                ta.ticker = ticker
+
+                seen_reports: set = set()
+                final_state = None
+
+                for chunk in ta.graph.stream(
+                    ta.propagator.create_initial_state(ticker, today),
+                    **ta.propagator.get_graph_args(),
+                ):
+                    final_state = chunk
+
+                    for field, label in STATE_REPORT_FIELDS:
+                        val = chunk.get(field, "")
+                        if val and label not in seen_reports:
+                            seen_reports.add(label)
+                            event_queue.put({
+                                "type": "progress",
+                                "ticker": ticker,
+                                "agent": label,
+                                "status": "done",
+                            })
+
+                    sender = chunk.get("sender")
+                    if sender and sender not in seen_reports:
+                        seen_reports.add(sender)
+                        event_queue.put({
+                            "type": "progress",
+                            "ticker": ticker,
+                            "agent": sender,
+                            "status": "done",
+                        })
+
+                if final_state is None:
+                    raise ValueError("No state returned from graph")
+
+                ta.curr_state = final_state
+                decision = ta.process_signal(final_state.get("final_trade_decision", ""))
+                ta._log_state(today, final_state)
+                rating = _extract_rating(final_state.get("final_trade_decision", ""))
+
+                event_queue.put({
+                    "type": "ticker_result",
+                    "ticker": ticker,
+                    "index": i,
+                    "total": len(tickers),
+                    "decision": decision,
+                    "rating": rating,
+                    "reports": _extract_reports(final_state),
+                })
+
+            except Exception as e:
+                logging.exception("Batch error on %s", ticker)
+                event_queue.put({
+                    "type": "ticker_error",
+                    "ticker": ticker,
+                    "index": i,
+                    "error": str(e),
+                })
+
+        event_queue.put({"type": "batch_done"})
+        event_queue.put(None)  # sentinel
+
+    thread = threading.Thread(target=_run_batch, daemon=True)
+    thread.start()
+
+    async def _event_generator():
+        while True:
+            try:
+                event = event_queue.get(timeout=0.5)
+            except queue.Empty:
+                yield ": keepalive\n\n"
+                continue
+            if event is None:
+                break
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(_event_generator(), media_type="text/event-stream")
 
 
 if __name__ == "__main__":

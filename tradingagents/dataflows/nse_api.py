@@ -152,7 +152,7 @@ def _fetch_tv_indicators(symbol: str) -> Dict:
         return {}
 
 
-(index_name: str = "NIFTY 50") -> Dict:
+def get_index_stocks(index_name: str = "NIFTY 50") -> Dict:
     """
     Fetch live market data for all stocks in an index.
     Uses yfinance with parallel requests for speed.

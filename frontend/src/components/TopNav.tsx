@@ -4,7 +4,7 @@ import type { View } from '../types'
 
 interface TopNavProps {
   view: View
-  onNav: (v: 'screener' | 'results') => void
+  onNav: (v: 'screener' | 'results' | 'watchlist') => void
 }
 
 export default function TopNav({ view, onNav }: TopNavProps) {
@@ -34,6 +34,13 @@ export default function TopNav({ view, onNav }: TopNavProps) {
           onClick={() => onNav('screener')}
         >
           Screener
+        </button>
+        <button
+          id="nav-watchlist"
+          className={`nav-link ${view === 'watchlist' ? 'active' : ''}`}
+          onClick={() => onNav('watchlist')}
+        >
+          Watchlist
         </button>
         <button
           id="nav-results"
