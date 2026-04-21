@@ -13,6 +13,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
+# Try to import tradingview-ta for richer technical indicators.
+# It is optional — screener works without it, just with fewer signals.
+try:
+    from tradingview_ta import TA_Handler, Interval as TVInterval
+    _TV_TA_AVAILABLE = True
+except ImportError:
+    _TV_TA_AVAILABLE = False
+    logger.info("tradingview-ta not installed — RSI/volume screening disabled")
+
 # ── Index Constituents (updated periodically) ─────────────────────────────
 # These are the current Nifty 50 and Bank Nifty constituents.
 # Update this list when SEBI/NSE reconstitutes the indices.
@@ -116,7 +125,34 @@ def _fetch_single_stock(symbol: str) -> Dict:
         }
 
 
-def get_index_stocks(index_name: str = "NIFTY 50") -> Dict:
+def _fetch_tv_indicators(symbol: str) -> Dict:
+    """
+    Fetch RSI and volume data from TradingView for a single NSE stock.
+    Returns an empty dict on failure — screener works without it.
+    """
+    if not _TV_TA_AVAILABLE:
+        return {}
+    try:
+        handler = TA_Handler(
+            symbol=symbol,
+            screener="india",
+            exchange="NSE",
+            interval=TVInterval.INTERVAL_1_DAY,
+        )
+        analysis = handler.get_analysis()
+        ind = analysis.indicators
+        return {
+            "rsi":          ind.get("RSI"),
+            "volume":       ind.get("volume"),
+            "volume_sma20": ind.get("volume_ma"),
+            "tv_rec":       analysis.summary.get("RECOMMENDATION", ""),
+        }
+    except Exception as exc:
+        logger.debug("tradingview-ta failed for %s: %s", symbol, exc)
+        return {}
+
+
+(index_name: str = "NIFTY 50") -> Dict:
     """
     Fetch live market data for all stocks in an index.
     Uses yfinance with parallel requests for speed.
@@ -149,25 +185,51 @@ def screen_stocks(
     index_name: str = "NIFTY 50",
     pct_change_threshold: float = 2.0,
     near_52w_pct: float = 5.0,
+    rsi_oversold: float = 32.0,
+    rsi_overbought: float = 68.0,
+    volume_spike_multiplier: float = 2.0,
 ) -> Dict:
     """
     Fetch index stocks and flag 'interesting' ones for deep analysis.
 
     Screening rules:
-    1. Big movers: |% change| >= pct_change_threshold
-    2. Near 52-week high: price within near_52w_pct% of year_high
-    3. Near 52-week low: price within near_52w_pct% of year_low
+    1. Big movers   : |% change| >= pct_change_threshold
+    2. Near 52W high: price within near_52w_pct% of year_high
+    3. Near 52W low : price within near_52w_pct% of year_low
+    4. RSI extreme  : RSI < rsi_oversold (oversold) or > rsi_overbought (overbought)
+    5. Volume spike : current volume > volume_spike_multiplier * 20-day avg volume
     """
     result = get_index_stocks(index_name)
     stocks = result["stocks"]
 
+    # Step 1: Enrich with TradingView technical indicators (parallel)
+    symbols = [s["symbol"] for s in stocks]
+    tv_data: Dict[str, Dict] = {}
+    if _TV_TA_AVAILABLE:
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {executor.submit(_fetch_tv_indicators, sym): sym for sym in symbols}
+            for future in as_completed(futures):
+                sym = futures[future]
+                tv_data[sym] = future.result()
+
+    # Step 2: Apply screening rules
     flagged = []
     for stock in stocks:
         reasons = []
-        ltp = stock["ltp"] or 0
-        pct = stock["pct_change"] or 0
+        ltp    = stock["ltp"]    or 0
+        pct    = stock["pct_change"] or 0
         y_high = stock["year_high"] or 0
-        y_low = stock["year_low"] or 0
+        y_low  = stock["year_low"]  or 0
+        sym    = stock["symbol"]
+        tv     = tv_data.get(sym, {})
+
+        # Attach TV indicators to the stock dict so the frontend can display them
+        rsi        = tv.get("rsi")
+        volume_tv  = tv.get("volume")
+        vol_sma20  = tv.get("volume_sma20")
+        tv_rec     = tv.get("tv_rec", "")
+        stock["rsi"]    = round(rsi, 1)      if rsi      is not None else None
+        stock["tv_rec"] = tv_rec
 
         # Rule 1: Big movers
         if abs(pct) >= pct_change_threshold:
@@ -186,13 +248,27 @@ def screen_stocks(
             if dist_from_low <= near_52w_pct:
                 reasons.append(f"Near 52W low ({dist_from_low:.1f}% above)")
 
-        stock["flagged"] = len(reasons) > 0
+        # Rule 4: RSI extremes (requires tradingview-ta)
+        if rsi is not None:
+            if rsi <= rsi_oversold:
+                reasons.append(f"RSI oversold ({rsi:.1f})")
+            elif rsi >= rsi_overbought:
+                reasons.append(f"RSI overbought ({rsi:.1f})")
+
+        # Rule 5: Volume spike (requires tradingview-ta)
+        if volume_tv and vol_sma20 and vol_sma20 > 0:
+            ratio = volume_tv / vol_sma20
+            if ratio >= volume_spike_multiplier:
+                reasons.append(f"Volume spike ({ratio:.1f}x avg)")
+
+        stock["flagged"]      = len(reasons) > 0
         stock["flag_reasons"] = reasons
 
         if reasons:
             flagged.append(stock)
 
-    result["flagged"] = flagged
+    result["flagged"]       = flagged
     result["flagged_count"] = len(flagged)
+    result["tv_ta_active"]  = _TV_TA_AVAILABLE  # let frontend know if TV data is live
 
     return result

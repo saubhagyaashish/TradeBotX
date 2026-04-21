@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 import asyncio
 import logging
 import queue
@@ -102,6 +103,84 @@ def _extract_reports(state: dict) -> dict:
     reports["Portfolio Manager"] = state.get("final_trade_decision", "")
 
     return _safe_serialize(reports)
+
+
+# ---------------------------------------------------------------------------
+# Results history endpoint
+# ---------------------------------------------------------------------------
+
+RATING_KEYWORDS = ["STRONG BUY", "OVERWEIGHT", "UNDERWEIGHT", "STRONG SELL", "BUY", "SELL", "HOLD"]
+
+
+def _extract_rating(text: str) -> str:
+    """Pull the first matching rating keyword from final_trade_decision text."""
+    upper = text.upper()
+    for kw in RATING_KEYWORDS:
+        if kw in upper:
+            return kw
+    return "HOLD"
+
+
+@app.get("/api/results")
+async def get_results():
+    """
+    Walk the results/ directory and return all past analysis logs.
+    Each ticker can have multiple dated logs — all are returned, newest first.
+    """
+    results_dir = Path("results")
+    entries: list = []
+
+    if not results_dir.exists():
+        return {"results": []}
+
+    for ticker_dir in sorted(results_dir.iterdir()):
+        if not ticker_dir.is_dir():
+            continue
+        logs_dir = ticker_dir / "TradingAgentsStrategy_logs"
+        if not logs_dir.exists():
+            continue
+        for log_file in sorted(logs_dir.glob("full_states_log_*.json"), reverse=True):
+            try:
+                with open(log_file, encoding="utf-8") as fh:
+                    data = json.load(fh)
+
+                final = data.get("final_trade_decision", "")
+                rating = _extract_rating(final)
+
+                # Build per-agent report dict (same shape as the SSE result)
+                ids = data.get("investment_debate_state") or {}
+                rds = data.get("risk_debate_state") or {}
+
+                reports = {
+                    "Market Analyst":        data.get("market_report", ""),
+                    "Social Media Analyst":  data.get("sentiment_report", ""),
+                    "News Analyst":          data.get("news_report", ""),
+                    "Fundamentals Analyst":  data.get("fundamentals_report", ""),
+                    "India Macro Analyst":   data.get("india_macro_report", ""),
+                    "Bull Researcher":       ids.get("bull_history", ""),
+                    "Bear Researcher":       ids.get("bear_history", ""),
+                    "Research Manager":      ids.get("judge_decision", ""),
+                    "Trader":                data.get("trader_investment_decision", ""),
+                    "Aggressive Analyst":    rds.get("aggressive_history", ""),
+                    "Conservative Analyst":  rds.get("conservative_history", ""),
+                    "Neutral Analyst":       rds.get("neutral_history", ""),
+                    "Portfolio Manager":     final,
+                }
+
+                entries.append({
+                    "ticker": data.get("company_of_interest", ticker_dir.name),
+                    "date":   data.get("trade_date",
+                                       log_file.stem.replace("full_states_log_", "")),
+                    "rating": rating,
+                    "decision": final,
+                    "reports": _safe_serialize(reports),
+                })
+            except Exception as exc:
+                logging.warning("Failed to parse %s: %s", log_file, exc)
+
+    # Sort newest date first
+    entries.sort(key=lambda e: e["date"], reverse=True)
+    return {"results": entries}
 
 
 # ---------------------------------------------------------------------------
