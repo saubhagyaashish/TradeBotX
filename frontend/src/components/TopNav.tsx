@@ -1,15 +1,17 @@
 // TopNav — site-wide navigation bar
 
+import type { View } from '../types'
+
 interface TopNavProps {
-  view: 'screener' | 'analysis'
+  view: View
+  onNav: (v: 'screener' | 'results') => void
 }
 
-export default function TopNav({ view }: TopNavProps) {
+export default function TopNav({ view, onNav }: TopNavProps) {
   return (
     <nav className="topnav">
       <div className="topnav-brand">
         <div className="brand-icon">
-          {/* Candlestick / chart icon */}
           <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
             <rect x="4" y="8" width="3" height="10" rx="1" />
             <rect x="5" y="5" width="1" height="3" />
@@ -25,8 +27,21 @@ export default function TopNav({ view }: TopNavProps) {
         <span className="brand-name">Trade<span>BotX</span></span>
       </div>
 
-      <div className="topnav-badge">
-        {view === 'screener' ? 'NSE Screener' : 'Agent Analysis'}
+      <div className="topnav-links">
+        <button
+          id="nav-screener"
+          className={`nav-link ${view === 'screener' || view === 'analysis' ? 'active' : ''}`}
+          onClick={() => onNav('screener')}
+        >
+          Screener
+        </button>
+        <button
+          id="nav-results"
+          className={`nav-link ${view === 'results' ? 'active' : ''}`}
+          onClick={() => onNav('results')}
+        >
+          Results
+        </button>
       </div>
     </nav>
   )

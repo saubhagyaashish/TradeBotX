@@ -6,6 +6,7 @@ import './index.css'
 import TopNav from './components/TopNav'
 import ScreenerView from './components/ScreenerView'
 import AnalysisView from './components/AnalysisView'
+import ResultsView from './components/ResultsView'
 import type { Stock, ScreenResult, AnalysisResult, View } from './types'
 
 const API = 'http://localhost:8000'
@@ -114,12 +115,20 @@ export default function App() {
     setView('screener')
   }, [])
 
+  // ── Nav link clicks ────────────────────────────────────────────────
+  const handleNav = useCallback((v: 'screener' | 'results') => {
+    eventSourceRef.current?.close()
+    setView(v)
+  }, [])
+
   // ── Render ────────────────────────────────────────────────────────
   return (
     <div className="app">
-      <TopNav view={view} />
+      <TopNav view={view} onNav={handleNav} />
 
-      {view === 'screener' ? (
+      {view === 'results' ? (
+        <ResultsView />
+      ) : view === 'screener' ? (
         <ScreenerView
           indices={indices}
           selectedIndex={selectedIndex}

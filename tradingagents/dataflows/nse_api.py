@@ -5,6 +5,7 @@ Since the NSE India API blocks programmatic requests, we use yfinance
 constituent lists that are updated periodically.
 """
 
+import math
 import yfinance as yf
 import logging
 from typing import Dict, List
@@ -61,6 +62,15 @@ SUPPORTED_INDICES: Dict[str, List[str]] = {
 }
 
 
+def _clean(val, default: float = 0.0) -> float:
+    """Return val as float, replacing NaN/Inf with default."""
+    try:
+        v = float(val)
+        return default if (math.isnan(v) or math.isinf(v)) else v
+    except (TypeError, ValueError):
+        return default
+
+
 def _fetch_single_stock(symbol: str) -> Dict:
     """Fetch live data for a single NSE stock via yfinance."""
     ticker_str = f"{symbol}.NS"
@@ -83,16 +93,16 @@ def _fetch_single_stock(symbol: str) -> Dict:
             "symbol": symbol,
             "name": symbol,
             "ticker": ticker_str,
-            "open": round(open_price, 2),
-            "high": round(day_high, 2),
-            "low": round(day_low, 2),
-            "ltp": round(ltp, 2),
-            "prev_close": round(prev_close, 2),
-            "change": change,
-            "pct_change": pct_change,
-            "volume": volume,
-            "year_high": round(year_high, 2),
-            "year_low": round(year_low, 2),
+            "open": round(_clean(open_price), 2),
+            "high": round(_clean(day_high), 2),
+            "low": round(_clean(day_low), 2),
+            "ltp": round(_clean(ltp), 2),
+            "prev_close": round(_clean(prev_close), 2),
+            "change": round(_clean(change), 2),
+            "pct_change": round(_clean(pct_change), 2),
+            "volume": int(_clean(volume)),
+            "year_high": round(_clean(year_high), 2),
+            "year_low": round(_clean(year_low), 2),
         }
     except Exception as e:
         logger.warning(f"Failed to fetch {ticker_str}: {e}")

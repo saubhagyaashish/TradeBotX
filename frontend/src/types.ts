@@ -31,7 +31,15 @@ export interface AnalysisResult {
   reports: Record<string, string>
 }
 
-export type View = 'screener' | 'analysis'
+export type View = 'screener' | 'analysis' | 'results'
+
+export interface ResultEntry {
+  ticker: string
+  date: string
+  decision: string
+  rating: string
+  reports: Record<string, string>
+}
 
 export const PIPELINE = [
   'Market Analyst',
