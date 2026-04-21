@@ -20,11 +20,14 @@ from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.dataflows.nse_api import get_index_stocks, screen_stocks, SUPPORTED_INDICES
 import scheduler as sched
+import database as db
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start the scheduler on startup and shut it down cleanly on exit."""
+    db.init_db()
+    logging.info("Database initialised")
     sched.start_scheduler()
     logging.info("Scheduler initialised")
     yield
@@ -134,6 +137,17 @@ def _extract_rating(text: str) -> str:
         if kw in upper:
             return kw
     return "HOLD"
+
+
+def _fetch_price(ticker: str):
+    """Best-effort current price fetch for prediction logging."""
+    try:
+        import yfinance as yf
+        info = yf.Ticker(ticker).fast_info
+        price = getattr(info, "last_price", None)
+        return float(price) if price else None
+    except Exception:
+        return None
 
 
 @app.get("/api/results")
@@ -309,6 +323,21 @@ async def analyze_stream(
             ta._log_state(date, final_state)
 
             reports = _extract_reports(final_state)
+            rating = _extract_rating(final_state.get("final_trade_decision", ""))
+
+            # Save prediction to database
+            try:
+                price = _fetch_price(ticker)
+                db.save_prediction(
+                    ticker=ticker,
+                    trade_date=date,
+                    decision=decision,
+                    rating=rating,
+                    price_at_prediction=price,
+                    reports=reports,
+                )
+            except Exception as _dbe:
+                logging.warning("Failed to save prediction to DB: %s", _dbe)
 
             event_queue.put({
                 "type": "result",
@@ -634,3 +663,38 @@ async def get_morning_report():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("api_server:app", host="0.0.0.0", port=8000, reload=True)
+
+
+# ---------------------------------------------------------------------------
+# Predictions endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/predictions")
+async def list_predictions(
+    limit: int = Query(100),
+    offset: int = Query(0),
+    rating: str = Query(None),
+):
+    """Return all predictions, newest first, optionally filtered by rating."""
+    preds = await asyncio.to_thread(db.get_predictions, limit, offset, rating)
+    total = await asyncio.to_thread(db.get_total_count, rating)
+    return {"predictions": preds, "total": total}
+
+
+@app.get("/api/predictions/stats")
+async def prediction_stats():
+    """Return accuracy statistics: win rate, avg return, per-rating breakdown."""
+    stats = await asyncio.to_thread(db.get_stats)
+    return stats
+
+
+@app.post("/api/predictions/update-outcomes")
+async def trigger_update_outcomes(days: int = Query(3)):
+    """
+    Check predictions older than `days` days, fetch current price,
+    and compute return % + win/loss.
+    """
+    def _run():
+        return db.update_outcomes(days_since=days)
+    updated = await asyncio.to_thread(_run)
+    return {"updated": updated, "days_since": days}

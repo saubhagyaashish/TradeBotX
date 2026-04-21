@@ -208,6 +208,21 @@ def run_morning_scan(trigger: str = "scheduled") -> dict:
                     report["analysed_count"] += 1
                     logger.info("    %s → %s", ticker, rating)
 
+                    # Persist to predictions database
+                    try:
+                        import database as db
+                        price = db.fetch_price(ticker)
+                        db.save_prediction(
+                            ticker=ticker,
+                            trade_date=today,
+                            decision=decision,
+                            rating=rating,
+                            price_at_prediction=price,
+                        )
+                    except Exception as _dbe:
+                        logger.warning("Failed to save prediction for %s: %s", ticker, _dbe)
+
+
             except Exception as exc:
                 logger.exception("Pipeline error for %s", ticker)
                 report["errors"].append(f"{ticker}: {exc}")

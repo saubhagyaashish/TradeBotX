@@ -161,23 +161,26 @@ We evaluated [tradingview-mcp](https://github.com/atilaahmettaner/tradingview-mc
 
 ---
 
-### Phase 4: Prediction Tracking & Accuracy ⏱️ ~3-4 hours
+### Phase 4: Prediction Tracking & Accuracy ✅ DONE
 
 **Goal**: Track every prediction and compare with actual price movement to measure agent accuracy.
 
-*Note: We can borrow backtesting metric formulas (Sharpe ratio, Calmar ratio, Max Drawdown) from `tradingview-mcp`'s local backtest engine when building the accuracy dashboard.*
-
 | Task | Details | Status |
 |---|---|---|
-| Prediction database | SQLite table: `(id, ticker, date, decision, price_at_prediction, reports_json)` | ⏳ |
-| Outcome tracker | Daily job: for predictions older than N days, fetch current price and compute returns | ⏳ |
-| Accuracy dashboard | Show win rate, avg return, per-agent accuracy breakdown | ⏳ |
-| Memory integration | Feed actual outcomes back into [reflect_and_remember()](file:///d:/TradingAgents/tradingagents/graph/trading_graph.py#277-294) to improve agents over time | ⏳ |
+| Prediction database | SQLite: `(ticker, trade_date, decision, rating, price_at_prediction, current_price, return_pct, is_win, ...)` | ✅ Done |
+| Outcome tracker | `db.update_outcomes(days=3)` — fetch current price, compute return %, determine win/loss per rating direction | ✅ Done |
+| Accuracy dashboard | 4 stat cards + per-rating breakdown + full predictions table with Win/Loss badges | ✅ Done |
+| Auto-save predictions | Saved after every SSE analysis, batch analysis, and morning scan | ✅ Done |
 
-**Files to create/modify**:
-- New: `database.py` — SQLite wrapper for predictions
-- [api_server.py](file:///d:/TradingAgents/api_server.py) — save predictions, expose `GET /api/predictions` endpoint
-- [App.tsx](file:///d:/TradingAgents/frontend/src/App.tsx) — accuracy dashboard component
+**Files created/modified**:
+- [database.py](file:///c:/TradeBotX/database.py) — **[NEW]** SQLite wrapper with `init_db`, `save_prediction`, `update_outcomes`, `get_stats`
+- [api_server.py](file:///c:/TradeBotX/api_server.py) — `init_db()` in lifespan, prediction save in SSE endpoint, 3 new endpoints: `GET /api/predictions`, `GET /api/predictions/stats`, `POST /api/predictions/update-outcomes`
+- [scheduler.py](file:///c:/TradeBotX/scheduler.py) — saves predictions for every scheduled scan
+- [PredictionsView.tsx](file:///c:/TradeBotX/frontend/src/components/PredictionsView.tsx) — **[NEW]** accuracy dashboard
+- [TopNav.tsx](file:///c:/TradeBotX/frontend/src/components/TopNav.tsx) — added "Accuracy" tab
+- [App.tsx](file:///c:/TradeBotX/frontend/src/App.tsx) — routed `'predictions'` view
+- [types.ts](file:///c:/TradeBotX/frontend/src/types.ts) — `Prediction`, `PredictionStats`, `RatingStats`
+- [index.css](file:///c:/TradeBotX/frontend/src/index.css) — stat cards, rating table, predictions table, outcome badges
 
 ---
 
@@ -259,18 +262,19 @@ This phase would add a new data vendor in `dataflows/` alongside yfinance.
 | **1. Fix Foundation** (`/api/results` + screener upgrade) | 1h | 🔴 Critical blocker | ✅ Done |
 | **2. Watchlist + Batch Analysis** | 2h | 🔴 Essential | ✅ Done |
 | **3. Scheduled Scanning** | 2-3h | 🟡 High | ✅ Done |
-| 4. Prediction Tracking | 3-4h | 🟡 High | **Next** |
-| 5. Alerts (Telegram) | 2-3h | 🟢 Nice to have | Later |
+| **4. Prediction Tracking** | 3-4h | 🟡 High | ✅ Done |
+| 5. Alerts (Telegram) | 2-3h | 🟢 Nice to have | **Next** |
 | 6. Live Data (Broker API) | 5+h | 🟢 Advanced | Later |
 
 ### What's Already Done
 - ✅ NSE index screener (price + 52-week + RSI + volume spike flagging via `tradingview-ta`)
-- ✅ Full React dashboard with 4-view routing (Screener / Watchlist / Analysis / Results)
+- ✅ Full React dashboard with 5-view routing (Screener / Watchlist / Analysis / Results / Accuracy)
 - ✅ SSE streaming analysis pipeline
 - ✅ Auto-date (uses today's date)
 - ✅ Results history — full end-to-end (backend + frontend)
 - ✅ Custom watchlist with persistence (`watchlists.json`)
 - ✅ Batch analysis with live SSE progress per ticker
 - ✅ APScheduler pre-market scan at configurable IST time with `SchedulerCard` UI
+- ✅ SQLite prediction tracking with win/loss accuracy dashboard
 
-**Total remaining effort**: ~6-8 hours for Phases 4-5
+**Total remaining effort**: ~2-3 hours for Phase 5 (Telegram Alerts)

@@ -4,7 +4,7 @@ import type { View } from '../types'
 
 interface TopNavProps {
   view: View
-  onNav: (v: 'screener' | 'results' | 'watchlist') => void
+  onNav: (v: 'screener' | 'results' | 'watchlist' | 'predictions') => void
 }
 
 export default function TopNav({ view, onNav }: TopNavProps) {
@@ -48,6 +48,13 @@ export default function TopNav({ view, onNav }: TopNavProps) {
           onClick={() => onNav('results')}
         >
           Results
+        </button>
+        <button
+          id="nav-predictions"
+          className={`nav-link ${view === 'predictions' ? 'active' : ''}`}
+          onClick={() => onNav('predictions')}
+        >
+          Accuracy
         </button>
       </div>
     </nav>

@@ -31,7 +31,38 @@ export interface AnalysisResult {
   reports: Record<string, string>
 }
 
-export type View = 'screener' | 'analysis' | 'results' | 'watchlist'
+export type View = 'screener' | 'analysis' | 'results' | 'watchlist' | 'predictions'
+
+export interface Prediction {
+  id: number
+  ticker: string
+  trade_date: string
+  decision: string
+  rating: string
+  price_at_prediction: number | null
+  current_price: number | null
+  return_pct: number | null
+  is_win: number | null        // 1 = win, 0 = loss, null = pending
+  outcome_checked_at: string | null
+  created_at: string
+}
+
+export interface RatingStats {
+  count: number
+  wins: number
+  win_rate: number | null
+  avg_return: number | null
+}
+
+export interface PredictionStats {
+  total: number
+  settled: number
+  pending: number
+  win_rate: number | null
+  avg_return: number | null
+  by_rating: Record<string, RatingStats>
+}
+
 
 export interface CustomWatchlist {
   tickers: string[]
