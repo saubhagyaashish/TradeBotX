@@ -4,7 +4,7 @@ import asyncio
 import logging
 import queue
 import threading
-from typing import List
+from typing import List, Optional
 from datetime import date as dt_date
 from contextlib import asynccontextmanager
 
@@ -22,15 +22,53 @@ from tradingagents.dataflows.nse_api import get_index_stocks, screen_stocks, SUP
 import scheduler as sched
 import database as db
 
+# ── Upstox integration imports ────────────────────────────────────────────────
+from upstox_auth import load_config_from_env, validate_token, UpstoxConfig
+from upstox_client import (
+    UpstoxClient,
+    symbol_to_instrument_key,
+    ALL_INSTRUMENTS,
+    NIFTY_50_INSTRUMENTS,
+    NIFTY_BANK_INSTRUMENTS,
+)
+from paper_trader import PaperTrader
+import technical as ta
+
+
+# ── Global Upstox state (set in lifespan) ─────────────────────────────────────
+upstox_config: Optional[UpstoxConfig] = None
+upstox_client: Optional[UpstoxClient] = None
+paper_trader: Optional[PaperTrader] = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start the scheduler on startup and shut it down cleanly on exit."""
+    global upstox_config, upstox_client, paper_trader
+
     db.init_db()
     logging.info("Database initialised")
+
+    # ── Upstox client init ──
+    upstox_config = load_config_from_env()
+    if upstox_config.access_token:
+        await validate_token(upstox_config)
+        upstox_client = UpstoxClient(upstox_config)
+        logging.info("Upstox client initialised (%s mode)", upstox_config.mode)
+    else:
+        logging.warning("Upstox token not set — Upstox endpoints will return errors")
+
+    # ── Paper trader init ──
+    paper_trader = PaperTrader(initial_capital=100_000)
+    logging.info("Paper trader initialised with ₹%.0f capital", paper_trader.capital)
+
     sched.start_scheduler()
     logging.info("Scheduler initialised")
     yield
+
+    # ── Cleanup ──
+    if upstox_client:
+        await upstox_client.close()
     sched.stop_scheduler()
     logging.info("Scheduler stopped")
 
@@ -660,11 +698,6 @@ async def get_morning_report():
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("api_server:app", host="0.0.0.0", port=8000, reload=True)
-
-
 # ---------------------------------------------------------------------------
 # Predictions endpoints
 # ---------------------------------------------------------------------------
@@ -698,3 +731,193 @@ async def trigger_update_outcomes(days: int = Query(3)):
         return db.update_outcomes(days_since=days)
     updated = await asyncio.to_thread(_run)
     return {"updated": updated, "days_since": days}
+
+
+# ---------------------------------------------------------------------------
+# Upstox Market Data endpoints
+# ---------------------------------------------------------------------------
+
+def _require_upstox() -> UpstoxClient:
+    """Guard: raise 503 if Upstox is not configured."""
+    if upstox_client is None or upstox_config is None or not upstox_config.access_token:
+        raise HTTPException(
+            status_code=503,
+            detail="Upstox not configured — set UPSTOX_ACCESS_TOKEN in .env",
+        )
+    return upstox_client
+
+
+@app.get("/api/upstox/status")
+async def upstox_status():
+    """Return Upstox connection status and token validity."""
+    if upstox_config is None:
+        return {"configured": False}
+    return {
+        "configured": bool(upstox_config.access_token),
+        "valid": upstox_config.is_valid,
+        "mode": upstox_config.mode,
+        "user": upstox_config.user_name or None,
+        "validated_at": upstox_config.validated_at.isoformat() if upstox_config.validated_at else None,
+    }
+
+
+@app.get("/api/upstox/quote/{symbol}")
+async def upstox_quote(symbol: str):
+    """Get full market quote for a symbol via Upstox."""
+    client = _require_upstox()
+    quote = await client.get_quote_by_symbol(symbol)
+    if quote is None:
+        raise HTTPException(status_code=404, detail=f"No quote found for {symbol}")
+    return {"symbol": symbol, "quote": quote}
+
+
+@app.get("/api/upstox/ltp/{symbol}")
+async def upstox_ltp(symbol: str):
+    """Get last traded price for a symbol via Upstox."""
+    client = _require_upstox()
+    price = await client.get_ltp_by_symbol(symbol)
+    if price is None:
+        raise HTTPException(status_code=404, detail=f"No LTP for {symbol}")
+    return {"symbol": symbol, "ltp": price}
+
+
+@app.get("/api/upstox/candles/{symbol}")
+async def upstox_candles(
+    symbol: str,
+    unit: str = Query("days", description="minutes, hours, days, weeks, months"),
+    interval: str = Query("1"),
+    from_date: str = Query(None),
+    to_date: str = Query(None),
+):
+    """Get historical candle data for a symbol."""
+    client = _require_upstox()
+    df = await client.get_candles_as_df(symbol, unit, interval, to_date, from_date)
+    if df is None or df.empty:
+        raise HTTPException(status_code=404, detail=f"No candle data for {symbol}")
+    # Convert to JSON-safe format
+    records = df.to_dict(orient="records")
+    for r in records:
+        if "timestamp" in r:
+            r["timestamp"] = str(r["timestamp"])
+    return {"symbol": symbol, "candles": records, "count": len(records)}
+
+
+@app.get("/api/upstox/signals/{symbol}")
+async def upstox_signals(
+    symbol: str,
+    from_date: str = Query(None),
+    to_date: str = Query(None),
+):
+    """
+    Get technical indicator signal score for a symbol.
+    Fetches daily candles and computes RSI, MACD, EMA, VWAP, Bollinger, etc.
+    """
+    client = _require_upstox()
+    df = await client.get_candles_as_df(symbol, "days", "1", to_date, from_date)
+    if df is None or len(df) < 50:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Not enough candle data for {symbol} (need ≥50 days)",
+        )
+    signal = ta.generate_signal_score(df)
+    return {"symbol": symbol, "signal": signal}
+
+
+@app.get("/api/upstox/instruments")
+async def list_instruments():
+    """List all supported instrument symbols."""
+    return {
+        "nifty_50": list(NIFTY_50_INSTRUMENTS.keys()),
+        "nifty_bank": list(NIFTY_BANK_INSTRUMENTS.keys()),
+        "total": len(ALL_INSTRUMENTS),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Paper Trading endpoints
+# ---------------------------------------------------------------------------
+
+class PaperTradeEntry(BaseModel):
+    symbol: str
+    quantity: int
+    price: float
+    stop_loss: float
+    target_price: float
+    strategy: str = "manual"
+
+
+class PaperTradeExit(BaseModel):
+    symbol: str
+    price: float
+    reason: str = "MANUAL"
+
+
+@app.get("/api/paper/portfolio")
+async def paper_portfolio():
+    """Get current paper trading portfolio state."""
+    if paper_trader is None:
+        raise HTTPException(status_code=503, detail="Paper trader not initialised")
+    return paper_trader.get_portfolio_state()
+
+
+@app.post("/api/paper/buy")
+async def paper_buy(body: PaperTradeEntry):
+    """Enter a paper trade (BUY)."""
+    if paper_trader is None:
+        raise HTTPException(status_code=503, detail="Paper trader not initialised")
+    ikey = symbol_to_instrument_key(body.symbol)
+    if not ikey:
+        raise HTTPException(status_code=400, detail=f"Unknown symbol: {body.symbol}")
+    result = paper_trader.enter_trade(
+        symbol=body.symbol,
+        instrument_key=ikey,
+        quantity=body.quantity,
+        price=body.price,
+        stop_loss=body.stop_loss,
+        target_price=body.target_price,
+        strategy=body.strategy,
+    )
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.post("/api/paper/sell")
+async def paper_sell(body: PaperTradeExit):
+    """Exit a paper trade (SELL)."""
+    if paper_trader is None:
+        raise HTTPException(status_code=503, detail="Paper trader not initialised")
+    result = paper_trader.exit_trade(
+        symbol=body.symbol,
+        price=body.price,
+        reason=body.reason,
+    )
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.get("/api/paper/history")
+async def paper_history(limit: int = Query(50)):
+    """Get paper trade history."""
+    if paper_trader is None:
+        raise HTTPException(status_code=503, detail="Paper trader not initialised")
+    trades = paper_trader.get_trade_history(limit)
+    return {"trades": trades, "count": len(trades)}
+
+
+@app.get("/api/paper/performance")
+async def paper_performance():
+    """Get paper trading performance summary."""
+    if paper_trader is None:
+        raise HTTPException(status_code=503, detail="Paper trader not initialised")
+    return paper_trader.get_performance_summary()
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("api_server:app", host="0.0.0.0", port=8000, reload=True)
