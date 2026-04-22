@@ -185,7 +185,7 @@ GOAL: Fully autonomous trading bot. User = spectator.
 
 **Why Kite:**
 - Most popular algo trading API in India
-- Free for Zerodha account holders (`kiteconnect` Python package)
+- Free for Zerodha account holders (`kiteconnect` Python package — ₹2,000 one-time API subscription)
 - Live WebSocket price feed (tick-by-tick)
 - Full order placement, modification, cancellation
 - Historical data: minute-level OHLCV, unlimited history for daily
@@ -197,30 +197,47 @@ GOAL: Fully autonomous trading bot. User = spectator.
 - **Fyers API** — Better WebSocket performance
 - **TrueData** / **GlobalDataFeeds** — Paid tick data vendors (more reliable for HFT)
 
-### Data We Need Per Stock (In Real Time)
+### Data Source Map — What Comes From Where
+
+This is the practical answer to "how do we get all that data?"
+
+| Data Point | Source | How |
+|---|---|---|
+| **Live price (tick-by-tick)** | ✅ Kite WebSocket | Subscribe to instruments, get LTP + bid/ask + volume in real time |
+| **OHLCV candles** (1min → daily) | ✅ Kite API | `kite.historical_data()` — all intervals: minute, 5min, 15min, 60min, day |
+| **Bid/Ask depth** (Level 2) | ✅ Kite WebSocket | Full mode subscription gives top 5 bid/ask levels |
+| **India VIX** | ✅ Kite WebSocket | VIX is a subscribable instrument (`INDIA VIX`) — live value |
+| **Sectoral indices** | ✅ Kite WebSocket | NIFTY IT, NIFTY BANK, NIFTY PHARMA etc. are instruments — subscribe for live values |
+| **VWAP** | 🔧 Compute ourselves | Formula: `cumsum(price × volume) / cumsum(volume)` from tick data. Simple math, no external source needed. |
+| **RSI, MACD, EMA, Bollinger, Stochastic** | 🔧 Compute ourselves | Use `pandas-ta` or `ta-lib` Python library on Kite's OHLCV candles. Pure math. |
+| **Multi-timeframe confluence** | 🔧 Compute ourselves | Fetch candles from Kite at 15min + 1hr + daily → compute RSI/EMA on each → check alignment |
+| **Sector rotation / relative strength** | 🔧 Compute ourselves | Track sectoral index prices from Kite → compute RS = (sector % change) / (NIFTY % change) |
+| **Chart patterns** | 🔧 Compute ourselves | From candle data. **But:** Reality Check says most patterns have zero proven edge. Low priority. |
+| **Options chain / PCR** | ⚠️ NSE website | Kite can quote individual options, but NSE provides the full chain in one page. Scrape NSE option chain page or use `jugaad-data` package. |
+| **FII/DII flow** | ⚠️ NSE website | Published daily ~6 PM. Scrape NSE FII/DII page. Lagging indicator — useful for overnight bias, not intraday signals. |
+| **Earnings calendar** | ⚠️ BSE / Tickertape | BSE publishes board meeting dates. Tickertape has a clean earnings calendar. Scrape weekly. |
+| **Delivery percentage** | ⚠️ NSE website | NSE publishes delivery data next day. Not available intraday. Useful for overnight swing trade decisions. |
+
+**Key takeaway:** Kite gives us **live prices, historical candles, order execution, and VIX**. We compute all technical indicators ourselves from that raw data using `pandas-ta`. Three things need separate scraping: **FII/DII, options chain, and earnings calendar** — all from NSE/BSE websites.
+
+### Python Packages for Each Layer
 
 ```
-Live price + volume
-OHLCV: 1min, 5min, 15min, 1hr, 1day candles
-Bid/Ask spread + depth (Level 2)
-Delivery percentage
-Intraday high/low
-Day's VWAP
-52-week high/low
-Futures OI (Open Interest)
-Options chain: all strikes, CE/PE OI, IV, PCR
+kiteconnect          — Broker API (prices, orders, WebSocket)
+pandas-ta  or  ta-lib — Technical indicators (RSI, MACD, EMA, VWAP, BB, etc.)
+jugaad-data          — NSE/BSE data scraping (FII/DII, delivery, option chain)
+beautifulsoup4       — Scrape NSE/BSE/Tickertape for earnings calendar
+newsapi-python       — News headlines for sentiment analysis
 ```
 
 ### News + Sentiment Sources
 
 | Source | Type | Cost |
 |---|---|---|
-| NewsAPI | Global news, filtered by ticker | Free tier available |
-| Tickertape | Indian market focused | Scraping possible |
-| Moneycontrol / ET Markets | Best Indian coverage | Scraping |
-| Twitter/X API | Retail sentiment | Paid ($100/month) |
-| Reddit (IndiaInvestments) | Community sentiment | Free |
-| NSE announcements | Corporate actions, results | Free (NSE website) |
+| NewsAPI | Global news, filtered by ticker | Free tier (100 req/day) |
+| Tickertape | Indian market focused, earnings calendar | Scraping |
+| Moneycontrol / ET Markets | Best Indian stock coverage | Scraping |
+| NSE announcements | Corporate actions, board meetings, results | Free (NSE website) |
 
 ---
 
