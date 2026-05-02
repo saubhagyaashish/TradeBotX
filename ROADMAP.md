@@ -87,18 +87,23 @@ The rest of this roadmap is designed around these five principles.
 | Batch analysis with live SSE progress | ✅ Done |
 | APScheduler pre-market scan (8:30 AM IST) | ✅ Done |
 | SQLite prediction tracking + accuracy dashboard | ✅ Done |
-| Telegram alerts | 🔜 Phase 5 |
-| Real-time price feed | ❌ Missing |
-| Order execution (paper or live) | ❌ Missing |
-| Smart stop-loss & take-profit execution | ❌ Missing |
-| Risk management engine | ❌ Missing |
-| Portfolio management | ❌ Missing |
-| Multi-timeframe chart analysis | ❌ Missing |
-| Live P&L dashboard | ❌ Missing |
-| Self-improvement / trade learning loop | ❌ Missing |
-| Cloud deployment (24/7 uptime) | ❌ Missing |
+| **Upstox API v3 integration (replacing yfinance for live data)** | ✅ Done (2026-05-01) |
+| **Real-time price feed (REST + WebSocket skeleton)** | ✅ Done |
+| **Paper trading engine (virtual orders + SQLite)** | ✅ Done |
+| **Deterministic fast signal layer (RSI/MACD/EMA/VWAP/BB/Stoch)** | ✅ Done |
+| **Dual-timeframe analysis (daily + 5-min intraday)** | ✅ Done |
+| **Risk management (SL, position sizing, circuit breaker, holidays)** | ✅ Done |
+| **Paper Trading dashboard (React)** | ✅ Done |
+| **Batch LTP + smart movers API** | ✅ Done |
+| **Slippage model (0.05% per trade)** | ✅ Done |
+| **State persistence (survives server restarts)** | ✅ Done |
+| Telegram alerts | 🔜 Later |
+| Smart stop-loss & take-profit execution | 🔜 Step 8 (auto-bot) |
+| Auto signal scanner (every 5 min) | 🔜 Step 8 |
+| Self-improvement / trade learning loop | ❌ Later |
+| Cloud deployment (24/7 uptime) | ❌ Later |
 
-**Current description:** A sophisticated research assistant — it analyses stocks, stores predictions, tracks its accuracy, and sends alerts. But it cannot act on its own.
+**Current description:** ~~A sophisticated research assistant~~ → An autonomous intraday trading agent with real-time Upstox market data, deterministic technical analysis, and paper trading with risk management.
 
 **Target description:** A fully autonomous trading agent. You open the dashboard once a day, see portfolio value, today's P&L, bot's win rate, and current positions. Everything else is automated.
 
@@ -109,34 +114,42 @@ The rest of this roadmap is designed around these five principles.
 ### 🔴 Critical (Without These, Autonomy Is Impossible)
 
 #### A. Real-Time Market Data
-`yfinance` gives end-of-day data with a 15-minute delay on intraday quotes. The bot is making decisions on **yesterday's prices**. This is the single biggest problem.
+~~`yfinance` gives end-of-day data with a 15-minute delay on intraday quotes.~~
 
-**Impact:** By the time the bot decides to BUY, the opportunity may have come and gone 30 minutes ago.
+✅ **SOLVED (2026-05-01):** Migrated to **Upstox API v3**. Live LTP via REST, 5-minute intraday candles, WebSocket V3 skeleton for tick-by-tick. Batch LTP (1 API call for 47 stocks).
 
 #### B. Order Execution
-The bot can shout "BUY INFY" all day — but nothing happens. There is no mechanism to actually place a trade. Without order execution, the bot is just a prediction machine, not a trading bot.
+~~The bot can shout "BUY INFY" all day — but nothing happens.~~
+
+✅ **SOLVED (2026-05-01):** Paper trading engine (`paper_trader.py`) with virtual portfolio, slippage model (0.05%), SQLite persistence. Ready for live execution via `upstox_client.place_order()` when graduating from paper.
 
 #### C. Risk Management
-No professional trading system operates without stop-losses, position sizing rules, and circuit breakers. This is what separates disciplined algo traders from people who blow up their accounts.
+~~No professional trading system operates without stop-losses, position sizing rules, and circuit breakers.~~
+
+✅ **SOLVED (2026-05-01):** Full risk management: 2% daily loss limit, max 5 positions, 5% position sizing, mandatory stop-loss, trailing stops, **consecutive loss circuit breaker (3 losses → 30-min pause)**, NSE holiday calendar, market hours enforcement.
 
 ### 🟡 Important (Significantly Improves Edge)
 
 #### D. Speed — LLM Pipeline Is Too Slow for Intraday
-The current 13-agent pipeline takes **2–5 minutes per stock**. That's fine for a morning watchlist. It is catastrophic for intraday decisions. By the time the agents agree on a signal, the price has moved past the entry point.
+~~The current 13-agent pipeline takes 2–5 minutes per stock.~~
+
+✅ **SOLVED (2026-05-01):** Deterministic fast signal layer (`technical.py`) runs in <1 second. RSI, MACD, EMA, VWAP (intraday), Bollinger, Stochastic, ATR, volume surge. Dual-timeframe (daily + 5-min). Smart API strategy: batch LTP (1 call) → filter movers → only compute signals on movers.
 
 #### E. Market Intelligence Gaps
-The bot currently sees: price, RSI, volume. An expert trader also looks at: VWAP, multi-timeframe confluence, chart patterns, FII/DII flow, options PCR, sector rotation, earnings calendar.
+~~The bot currently sees: price, RSI, volume.~~
+
+✅ **PARTIALLY SOLVED:** Now sees: RSI, MACD, EMA-20/50, VWAP (intraday), Bollinger Bands, Stochastic, ATR, volume surge, intraday momentum (5-min trend). Still missing: FII/DII flow, options PCR, sector rotation, earnings calendar.
 
 #### F. Portfolio Awareness
-The bot has no idea what it currently "owns." It can't say "I already have 15% in IT, don't add more." Without portfolio awareness, position sizing is guesswork.
+✅ **SOLVED:** Paper trader tracks: open positions, capital, per-trade P&L, win rate, sector exposure. Dashboard shows all of this in real-time.
 
 ### 🟢 Nice to Have (Makes the Dashboard Impressive)
 
-- Sharpe/Sortino/Calmar ratios
-- Alpha vs NIFTY 50 benchmark
-- Backtesting engine
-- Interactive Telegram bot (`/positions`, `/pnl`, `/stop`)
-- Cloud deployment for 24/7 operation
+- ❌ Sharpe/Sortino/Calmar ratios
+- ❌ Alpha vs NIFTY 50 benchmark
+- ❌ Backtesting engine
+- ❌ Interactive Telegram bot (`/positions`, `/pnl`, `/stop`)
+- ❌ Cloud deployment for 24/7 operation
 
 ---
 
@@ -145,21 +158,23 @@ The bot has no idea what it currently "owns." It can't say "I already have 15% i
 ```
 CURRENT: Research assistant (analyses on demand)
     ↓
-Phase 5:  Telegram alerts              (~2-3h)   🔜 Next
+Phase 5:  Telegram alerts              (~2-3h)   ✅ Deferred — doing live trading first
     ↓
-Phase 6:  Paper trading engine          (~5-6h)   ← Most exciting step
+Phase 6:  Paper trading engine          (~5-6h)   ✅ DONE (2026-05-01)
     ↓
-Phase 7:  Real-time data layer          (~4-5h)   ← Foundation for everything
+Phase 6.5: System hardening            (~3h)      ✅ DONE (2026-05-01)
     ↓
-Phase 8:  Fast signal layer             (~3-4h)   ← Speed fix
+Phase 7:  Real-time data layer          (~4-5h)   ✅ DONE (Upstox API v3)
     ↓
-Phase 9:  Risk management engine        (~4-5h)   ← Safety layer
+Phase 8:  Fast signal layer             (~3-4h)   ✅ DONE (technical.py dual-timeframe)
     ↓
-Phase 10: Portfolio management          (~3-4h)   ← Know what you own
+Phase 9:  Risk management engine        (~4-5h)   ✅ DONE (circuit breaker, holidays, slippage)
     ↓
-Phase 11: Advanced analytics dashboard  (~3-4h)   ← Sharpe, Alpha, Drawdown
+Phase 10: Auto Paper Trading Bot        (~3-4h)   🔜 NEXT ← Step 8 in task.md
     ↓
-Phase 12: Cloud deployment              (~2-3h)   ← 24/7 uptime
+Phase 11: Advanced analytics dashboard  (~3-4h)   ⏳
+    ↓
+Phase 12: Cloud deployment              (~2-3h)   ⏳
     ↓
 Phase 13: 3-month paper trading period  (3 months of data)
     ↓

@@ -33,6 +33,7 @@ from upstox_client import (
 )
 from paper_trader import PaperTrader
 import technical as ta
+import signal_scanner as scanner
 
 
 # ── Global Upstox state (set in lifespan) ─────────────────────────────────────
@@ -64,13 +65,23 @@ async def lifespan(app: FastAPI):
 
     sched.start_scheduler()
     logging.info("Scheduler initialised")
+
+    # ── Auto-scanner: start if previously enabled ──
+    scanner_cfg = scanner.load_scanner_config()
+    if scanner_cfg.get("enabled", False) and upstox_client and paper_trader:
+        await scanner.start_scanner(upstox_client, paper_trader)
+        logging.info("Auto-scanner resumed (was enabled in config)")
+
     yield
 
     # ── Cleanup ──
+    # Stop scanner first
+    if scanner.scanner_state.is_running:
+        await scanner.stop_scanner()
     if upstox_client:
         await upstox_client.close()
     sched.stop_scheduler()
-    logging.info("Scheduler stopped")
+    logging.info("All services stopped")
 
 
 app = FastAPI(lifespan=lifespan)
@@ -809,17 +820,27 @@ async def upstox_signals(
     to_date: str = Query(None),
 ):
     """
-    Get technical indicator signal score for a symbol.
-    Fetches daily candles and computes RSI, MACD, EMA, VWAP, Bollinger, etc.
+    Get technical indicator signal score for a symbol (Fix #8: dual-timeframe).
+    Fetches daily candles for trend indicators + intraday 5-min candles for VWAP/momentum.
     """
     client = _require_upstox()
+
+    # Fetch daily candles (for RSI, MACD, EMA, Bollinger, ATR)
     df = await client.get_candles_as_df(symbol, "days", "1", to_date, from_date)
     if df is None or len(df) < 50:
         raise HTTPException(
             status_code=400,
             detail=f"Not enough candle data for {symbol} (need ≥50 days)",
         )
-    signal = ta.generate_signal_score(df)
+
+    # Try to fetch intraday 5-min candles (for VWAP + momentum)
+    intraday_df = None
+    try:
+        intraday_df = await client.get_intraday_candles_as_df(symbol, "5")
+    except Exception as exc:
+        logger.warning("Could not fetch intraday candles for %s: %s", symbol, exc)
+
+    signal = ta.generate_signal_score(df, intraday_df)
     return {"symbol": symbol, "signal": signal}
 
 
@@ -831,6 +852,50 @@ async def list_instruments():
         "nifty_bank": list(NIFTY_BANK_INSTRUMENTS.keys()),
         "total": len(ALL_INSTRUMENTS),
     }
+
+
+@app.get("/api/upstox/ltp/batch")
+async def batch_ltp(index: str = Query("NIFTY50")):
+    """
+    Get LTP for all stocks in an index in a single API call (Fix #7).
+    Much faster than 47 individual calls.
+    """
+    client = _require_upstox()
+    if index.upper() in ("NIFTY50", "NIFTY 50"):
+        symbols = list(NIFTY_50_INSTRUMENTS.keys())
+    elif index.upper() in ("NIFTYBANK", "NIFTY BANK", "NIFTY_BANK"):
+        symbols = list(NIFTY_BANK_INSTRUMENTS.keys())
+    else:
+        symbols = list(ALL_INSTRUMENTS.keys())
+    prices = await client.get_batch_ltp(symbols)
+    return {"index": index, "count": len(prices), "prices": prices}
+
+
+@app.get("/api/upstox/movers")
+async def market_movers(
+    index: str = Query("NIFTY50"),
+    threshold: float = Query(0.5, description="Min % change from open"),
+):
+    """
+    Get stocks that moved > threshold% from open (smart API strategy).
+    Only these need full signal analysis.
+    """
+    client = _require_upstox()
+    if index.upper() in ("NIFTY50", "NIFTY 50"):
+        symbols = list(NIFTY_50_INSTRUMENTS.keys())
+    elif index.upper() in ("NIFTYBANK", "NIFTY BANK", "NIFTY_BANK"):
+        symbols = list(NIFTY_BANK_INSTRUMENTS.keys())
+    else:
+        symbols = list(ALL_INSTRUMENTS.keys())
+    movers = await client.get_movers(symbols, threshold)
+    return {"index": index, "threshold_pct": threshold, "count": len(movers), "movers": movers}
+
+
+@app.get("/api/market/status")
+async def get_market_status():
+    """Get current NSE market status (open/closed, holiday check)."""
+    from nse_holidays import market_status as ms
+    return ms()
 
 
 # ---------------------------------------------------------------------------
@@ -912,6 +977,92 @@ async def paper_performance():
     if paper_trader is None:
         raise HTTPException(status_code=503, detail="Paper trader not initialised")
     return paper_trader.get_performance_summary()
+
+
+# ---------------------------------------------------------------------------
+# Auto-Scanner endpoints (Step 8: Auto Paper Trading Bot)
+# ---------------------------------------------------------------------------
+
+@app.post("/api/scanner/start")
+async def start_auto_scanner():
+    """Start the auto paper trading scanner."""
+    if upstox_client is None or paper_trader is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Upstox client or paper trader not initialised",
+        )
+    result = await scanner.start_scanner(upstox_client, paper_trader)
+    if "error" in result:
+        raise HTTPException(status_code=409, detail=result["error"])
+    return result
+
+
+@app.post("/api/scanner/stop")
+async def stop_auto_scanner():
+    """Stop the auto paper trading scanner."""
+    result = await scanner.stop_scanner()
+    if "error" in result:
+        raise HTTPException(status_code=409, detail=result["error"])
+    return result
+
+
+@app.get("/api/scanner/status")
+async def scanner_status():
+    """Get current auto-scanner status and stats."""
+    return scanner.get_scanner_status()
+
+
+@app.get("/api/scanner/config")
+async def get_scanner_config():
+    """Get scanner configuration."""
+    return scanner.load_scanner_config()
+
+
+class ScannerConfigUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    interval_minutes: Optional[int] = None
+    buy_score_threshold: Optional[float] = None
+    sell_score_threshold: Optional[float] = None
+    max_auto_positions: Optional[int] = None
+    force_close_time: Optional[str] = None
+    position_size_pct: Optional[float] = None
+    mover_threshold_pct: Optional[float] = None
+
+
+@app.post("/api/scanner/config")
+async def update_scanner_config(body: ScannerConfigUpdate):
+    """Update scanner configuration."""
+    cfg = scanner.load_scanner_config()
+    updates = body.model_dump(exclude_none=True)
+    cfg.update(updates)
+    scanner.save_scanner_config(cfg)
+    return cfg
+
+
+@app.get("/api/scanner/log")
+async def scanner_log(limit: int = Query(20)):
+    """Get recent scanner scan logs."""
+    log_file = scanner.SCANNER_LOG_FILE
+    if not log_file.exists():
+        return {"logs": [], "count": 0}
+    try:
+        logs = json.loads(log_file.read_text(encoding="utf-8"))
+        recent = logs[-limit:]
+        return {"logs": list(reversed(recent)), "count": len(recent)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/scanner/scan-now")
+async def trigger_single_scan():
+    """Trigger a single scan immediately (doesn't need scanner running)."""
+    if upstox_client is None or paper_trader is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Upstox client or paper trader not initialised",
+        )
+    result = await scanner.run_signal_scan(upstox_client, paper_trader)
+    return result
 
 
 # ---------------------------------------------------------------------------

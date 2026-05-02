@@ -31,7 +31,7 @@ export interface AnalysisResult {
   reports: Record<string, string>
 }
 
-export type View = 'screener' | 'analysis' | 'results' | 'watchlist' | 'predictions'
+export type View = 'screener' | 'analysis' | 'results' | 'watchlist' | 'predictions' | 'paper'
 
 export interface Prediction {
   id: number
@@ -124,4 +124,62 @@ export const REPORT_LABELS: Record<string, string> = {
   'Conservative Analyst': 'Conservative Risk View',
   'Neutral Analyst': 'Neutral Risk View',
   'Portfolio Manager': 'Final Rationale',
+}
+// ── Paper Trading Types ──────────────────────────────────────────────────
+
+export interface SignalData {
+  score: number
+  trend: string
+  recommendation: string
+  signals: {
+    rsi: number
+    rsi_signal: string
+    macd_bullish: boolean
+    macd_histogram: number
+    above_ema_20: boolean
+    above_ema_50: boolean
+    ema_20: number
+    ema_50: number
+    above_vwap: boolean
+    vwap: number
+    bollinger_position: number
+    stochastic_k: number
+    volume_surge: boolean
+    atr: number
+    close: number
+  }
+  component_scores: Record<string, number>
+}
+
+export interface LiveQuote {
+  symbol: string
+  ltp: number
+}
+
+export interface PaperPosition {
+  symbol: string
+  quantity: number
+  entry_price: number
+  entry_time: string
+  stop_loss: number
+  target_price: number
+  trailing_stop: number | null
+  strategy: string
+}
+
+export interface PaperPortfolio {
+  capital: number
+  initial_capital: number
+  total_pnl: number
+  total_pnl_pct: number
+  daily_pnl: number
+  open_positions: PaperPosition[]
+  position_count: number
+  daily_trades: number
+  daily_wins: number
+  daily_losses: number
+  total_trades: number
+  total_wins: number
+  total_win_rate: number | null
+  daily_loss_limit_active: boolean
 }

@@ -253,6 +253,105 @@ class UpstoxClient:
             return value.get("last_price")
         return None
 
+    async def get_batch_ltp(self, symbols: list[str]) -> dict[str, float]:
+        """
+        Get LTP for all symbols in a single API call (Fix #7).
+        Upstox supports up to 500 instrument keys per request.
+
+        Returns: {symbol: ltp, ...}
+        """
+        ikeys = []
+        key_to_symbol = {}
+        for sym in symbols:
+            ikey = symbol_to_instrument_key(sym)
+            if ikey:
+                ikeys.append(ikey)
+                key_to_symbol[ikey] = sym
+
+        if not ikeys:
+            return {}
+
+        # Upstox returns keys in "NSE_EQ:SYMBOL" format
+        data = await self.get_ltp(ikeys)
+        result = {}
+        for resp_key, value in data.items():
+            ltp = value.get("last_price")
+            if ltp is not None:
+                # Map back: response key "NSE_EQ:RELIANCE" → find matching instrument
+                for ikey, sym in key_to_symbol.items():
+                    if ikey.split("|")[0] in resp_key:
+                        # Check if symbol matches by looking up the ISIN
+                        check_key = resp_key.replace(":", "|")
+                        if check_key in key_to_symbol or sym.upper() in resp_key.upper():
+                            result[sym] = ltp
+                            break
+                else:
+                    # Fallback: extract symbol from response key
+                    parts = resp_key.split(":")
+                    if len(parts) >= 2:
+                        result[parts[-1]] = ltp
+
+        return result
+
+    async def get_batch_quotes(self, symbols: list[str]) -> dict[str, dict]:
+        """
+        Get full quotes (LTP + OHLC + volume) for all symbols in one call.
+        Returns: {symbol: {ltp, open, high, low, close, volume, ...}, ...}
+        """
+        ikeys = []
+        for sym in symbols:
+            ikey = symbol_to_instrument_key(sym)
+            if ikey:
+                ikeys.append(ikey)
+
+        if not ikeys:
+            return {}
+
+        data = await self.get_full_quote(ikeys)
+        result = {}
+        for resp_key, value in data.items():
+            parts = resp_key.split(":")
+            sym = parts[-1] if len(parts) >= 2 else resp_key
+            ohlc = value.get("ohlc", {})
+            result[sym] = {
+                "ltp": value.get("last_price"),
+                "open": ohlc.get("open"),
+                "high": ohlc.get("high"),
+                "low": ohlc.get("low"),
+                "close": ohlc.get("close"),
+                "volume": value.get("volume"),
+                "change": value.get("net_change"),
+                "pct_change": value.get("percentage_change"),
+            }
+        return result
+
+    async def get_movers(
+        self, symbols: list[str], threshold_pct: float = 0.5
+    ) -> list[dict]:
+        """
+        Get stocks that moved > threshold_pct from open (Fix #7: smart API strategy).
+        Only these stocks need full signal analysis.
+
+        Returns: sorted list of movers by absolute % change (largest first)
+        """
+        quotes = await self.get_batch_quotes(symbols)
+        movers = []
+        for sym, q in quotes.items():
+            ltp = q.get("ltp")
+            open_price = q.get("open")
+            if ltp and open_price and open_price > 0:
+                pct = ((ltp - open_price) / open_price) * 100
+                if abs(pct) >= threshold_pct:
+                    movers.append({
+                        "symbol": sym,
+                        "ltp": ltp,
+                        "open": open_price,
+                        "pct_change": round(pct, 2),
+                        "volume": q.get("volume"),
+                    })
+        movers.sort(key=lambda m: abs(m["pct_change"]), reverse=True)
+        return movers
+
     # ══════════════════════════════════════════════════════════════════════════
     # HISTORICAL DATA — V3 Candles
     # ══════════════════════════════════════════════════════════════════════════
@@ -281,7 +380,7 @@ class UpstoxClient:
         if to_date is None:
             to_date = date.today().isoformat()
         if from_date is None:
-            from_date = (date.today() - timedelta(days=30)).isoformat()
+            from_date = (date.today() - timedelta(days=100)).isoformat()
 
         # URL-encode the pipe character in instrument_key
         encoded_key = instrument_key.replace("|", "%7C")
@@ -341,6 +440,38 @@ class UpstoxClient:
             ikey, unit, interval, to_date, from_date
         )
 
+        if not candles:
+            return None
+
+        df = pd.DataFrame(
+            candles,
+            columns=["timestamp", "open", "high", "low", "close", "volume", "oi"],
+        )
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df = df.sort_values("timestamp").reset_index(drop=True)
+        return df
+
+    async def get_intraday_candles_as_df(
+        self,
+        symbol: str,
+        interval: str = "5",
+    ) -> Optional[pd.DataFrame]:
+        """
+        Get today's intraday candles as a DataFrame (Fix #8: dual-timeframe).
+
+        Args:
+            symbol: e.g. "RELIANCE"
+            interval: "1", "5", "15", "30" (minutes)
+
+        Returns:
+            DataFrame with columns: [timestamp, open, high, low, close, volume, oi]
+        """
+        ikey = symbol_to_instrument_key(symbol)
+        if not ikey:
+            logger.warning("Unknown symbol for intraday candles: %s", symbol)
+            return None
+
+        candles = await self.get_intraday_candles(ikey, "minutes", interval)
         if not candles:
             return None
 

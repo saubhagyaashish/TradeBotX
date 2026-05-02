@@ -4,7 +4,7 @@ import type { View } from '../types'
 
 interface TopNavProps {
   view: View
-  onNav: (v: 'screener' | 'results' | 'watchlist' | 'predictions') => void
+  onNav: (v: 'screener' | 'results' | 'watchlist' | 'predictions' | 'paper') => void
 }
 
 export default function TopNav({ view, onNav }: TopNavProps) {
@@ -55,6 +55,13 @@ export default function TopNav({ view, onNav }: TopNavProps) {
           onClick={() => onNav('predictions')}
         >
           Accuracy
+        </button>
+        <button
+          id="nav-paper"
+          className={`nav-link nav-link-highlight ${view === 'paper' ? 'active' : ''}`}
+          onClick={() => onNav('paper')}
+        >
+          📈 Paper Trade
         </button>
       </div>
     </nav>

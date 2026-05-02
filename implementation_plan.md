@@ -76,10 +76,14 @@ Results are saved to `results/<TICKER>/TradingAgentsStrategy_logs/full_states_lo
 - ✅ ~~Screener only checks price % change and 52-week proximity~~ — `tradingview-ta` installed, RSI + volume spike rules active
 - ✅ ~~No custom watchlist management~~ — `watchlists.json` persistence + full CRUD API + `WatchlistPanel` UI
 - ✅ ~~No batch analysis~~ — `POST /api/analyze/batch` SSE endpoint with live progress
-- ❌ No scheduled/automatic scanning
-- ❌ No prediction history or accuracy tracking
-- ❌ No alerts or notifications
-- ❌ No intraday data (yfinance = end-of-day only)
+- ✅ ~~No scheduled/automatic scanning~~ — APScheduler with `SchedulerCard` UI
+- ✅ ~~No prediction history or accuracy tracking~~ — SQLite + `PredictionsView` dashboard
+- ✅ ~~No intraday data~~ — Upstox API v3 with 5-min candles + dual-timeframe analysis
+- ✅ ~~No real-time prices~~ — Upstox REST + batch LTP + WebSocket skeleton
+- ✅ ~~No paper trading~~ — Full paper trading engine with risk management
+- ❌ No alerts or notifications (Telegram — deferred)
+- ❌ No backtesting framework
+- ❌ No auto-trading bot (Step 8 — next)
 
 ---
 
@@ -263,12 +267,14 @@ This phase would add a new data vendor in `dataflows/` alongside yfinance.
 | **2. Watchlist + Batch Analysis** | 2h | 🔴 Essential | ✅ Done |
 | **3. Scheduled Scanning** | 2-3h | 🟡 High | ✅ Done |
 | **4. Prediction Tracking** | 3-4h | 🟡 High | ✅ Done |
-| 5. Alerts (Telegram) | 2-3h | 🟢 Nice to have | **Next** |
-| 6. Live Data (Broker API) | 5+h | 🟢 Advanced | Later |
+| 5. Alerts (Telegram) | 2-3h | 🟢 Nice to have | Deferred |
+| **6. Upstox Migration + Paper Trading + Signals** | 8h | 🔴 Critical | ✅ Done (2026-05-01) |
+| **6.5 System Hardening** | 3h | 🔴 Critical | ✅ Done (2026-05-01) |
+| **7. Auto Paper Trading Bot** | 3-4h | 🟡 High | **🔜 Next** |
 
 ### What's Already Done
 - ✅ NSE index screener (price + 52-week + RSI + volume spike flagging via `tradingview-ta`)
-- ✅ Full React dashboard with 5-view routing (Screener / Watchlist / Analysis / Results / Accuracy)
+- ✅ Full React dashboard with 6-view routing (Screener / Watchlist / Analysis / Results / Accuracy / **Paper Trade**)
 - ✅ SSE streaming analysis pipeline
 - ✅ Auto-date (uses today's date)
 - ✅ Results history — full end-to-end (backend + frontend)
@@ -276,5 +282,64 @@ This phase would add a new data vendor in `dataflows/` alongside yfinance.
 - ✅ Batch analysis with live SSE progress per ticker
 - ✅ APScheduler pre-market scan at configurable IST time with `SchedulerCard` UI
 - ✅ SQLite prediction tracking with win/loss accuracy dashboard
+- ✅ **Upstox API v3** — OAuth auth, REST quotes, historical candles, intraday candles, batch LTP
+- ✅ **WebSocket V3 skeleton** — auto-reconnect, subscribe/unsubscribe, tick dispatch
+- ✅ **Deterministic signal engine** — RSI, MACD, EMA, VWAP (intraday), Bollinger, Stochastic, ATR, volume surge
+- ✅ **Dual-timeframe analysis** — daily candles (trend) + 5-min candles (entry timing + VWAP)
+- ✅ **Paper trading engine** — virtual orders, SQLite persistence, state recovery on restart
+- ✅ **Risk management** — 2% daily loss limit, max 5 positions, 5% sizing, mandatory SL, circuit breaker
+- ✅ **Slippage model** — 0.05% on entry/exit for realistic P&L
+- ✅ **NSE holiday calendar** — 2025-2026 holidays + weekend detection
+- ✅ **Batch LTP + movers API** — 1 API call for 47 stocks, smart filtering
+- ✅ **Paper Trading dashboard** — portfolio card, signal table, buy modal, positions, trade history
 
-**Total remaining effort**: ~2-3 hours for Phase 5 (Telegram Alerts)
+---
+
+### Phase 6: Upstox Migration + Paper Trading ✅ DONE
+
+**Goal**: Replace yfinance with real-time Upstox data, build paper trading engine, add deterministic signal layer.
+
+**Files created**:
+- [upstox_auth.py](file:///c:/TradeBotX/upstox_auth.py) — OAuth 2.0 token management
+- [upstox_client.py](file:///c:/TradeBotX/upstox_client.py) — REST API wrapper (quotes, candles, orders, batch LTP, movers)
+- [upstox_ws.py](file:///c:/TradeBotX/upstox_ws.py) — WebSocket V3 manager
+- [technical.py](file:///c:/TradeBotX/technical.py) — Deterministic signal engine with dual-timeframe
+- [paper_trader.py](file:///c:/TradeBotX/paper_trader.py) — Paper trading engine with risk management
+- [nse_holidays.py](file:///c:/TradeBotX/nse_holidays.py) — NSE holiday calendar + market status
+- [PaperTradingView.tsx](file:///c:/TradeBotX/frontend/src/components/PaperTradingView.tsx) — Dashboard view
+
+**Files modified**:
+- [api_server.py](file:///c:/TradeBotX/api_server.py) — 15+ new endpoints (Upstox + Paper Trading)
+- [TopNav.tsx](file:///c:/TradeBotX/frontend/src/components/TopNav.tsx) — added Paper Trade tab
+- [App.tsx](file:///c:/TradeBotX/frontend/src/App.tsx) — routed paper view
+- [types.ts](file:///c:/TradeBotX/frontend/src/types.ts) — PaperPortfolio, SignalData, etc.
+- [index.css](file:///c:/TradeBotX/frontend/src/index.css) — 500+ lines of Paper Trading CSS
+- `.env` / `.env.example` — Upstox credentials
+
+### Phase 6.5: System Hardening ✅ DONE
+
+**Goal**: Fix critical bugs and add safety guards before auto-trading.
+
+| Fix | Impact |
+|---|---|
+| SQLite UPDATE subquery (was using unsupported ORDER BY in UPDATE) | Bug fix |
+| State persistence — positions/capital survive restarts | Critical |
+| NSE holiday calendar (2025-2026) + weekend checks | Safety |
+| Circuit breaker — 3 consecutive losses → 30-min pause | Safety |
+| Slippage model — 0.05% on entry/exit | Accuracy |
+| Signal context logging — always saves JSON context | Audit |
+| Batch LTP — 1 API call for 47 stocks (was 47 individual calls) | Performance |
+| Dual-timeframe — intraday VWAP + momentum (was wrong daily VWAP) | Core logic |
+
+### Phase 7: Auto Paper Trading Bot 🔜 NEXT
+
+**Goal**: The bot automatically scans, enters, and exits paper trades with no human input.
+
+| Task | Details | Status |
+|---|---|---|
+| Signal scanner | Runs every 5 min during market hours; fetches batch LTP, filters movers, computes signals | ⏳ |
+| Auto paper BUY | If score ≥ 0.65 + risk checks pass → enter paper trade | ⏳ |
+| Auto paper SELL | If score ≤ 0.35 or SL/TP hit → exit paper trade | ⏳ |
+| WebSocket tick handler | Wire live ticks → `paper_trader.on_price_update()` for real-time SL/TP | ⏳ |
+| Force close at 15:20 IST | Scheduler job to close all positions before market close | ⏳ |
+| Integrate into scheduler | Add scanner as recurring APScheduler job | ⏳ |

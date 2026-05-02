@@ -16,11 +16,13 @@ import json
 import logging
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from pathlib import Path
 from typing import Optional
 
 import pytz
+
+from nse_holidays import is_market_open, is_trading_day, market_status
 
 logger = logging.getLogger(__name__)
 
@@ -96,12 +98,14 @@ class PaperTrader:
         max_daily_loss_pct: float = 2.0,
         max_positions: int = 5,
         max_position_size_pct: float = 5.0,
+        slippage_pct: float = 0.05,
     ):
         self.initial_capital = initial_capital
         self.capital = initial_capital
         self.max_daily_loss_pct = max_daily_loss_pct
         self.max_positions = max_positions
         self.max_position_size_pct = max_position_size_pct
+        self.slippage_pct = slippage_pct
 
         # Active positions
         self.positions: dict[str, Position] = {}
@@ -118,8 +122,15 @@ class PaperTrader:
         self.total_wins = 0
         self.total_pnl = 0.0
 
+        # Consecutive loss circuit breaker
+        self.consecutive_losses = 0
+        self.loss_pause_until: Optional[datetime] = None
+
         # Ensure DB tables exist
         self._init_db()
+
+        # Restore state from DB (Fix #2: survive restarts)
+        self._load_state_from_db()
 
     # ── Database ──────────────────────────────────────────────────────────
 
@@ -212,9 +223,19 @@ class PaperTrader:
         return False
 
     def check_market_hours(self) -> bool:
-        """Returns True if within trading hours."""
-        now = datetime.now(IST).time()
-        return MARKET_OPEN <= now <= MARKET_CLOSE
+        """Returns True if market is open (trading day + within hours)."""
+        return is_market_open()
+
+    def check_circuit_breaker(self) -> bool:
+        """Returns True if circuit breaker is active (3 consecutive losses → 30 min pause)."""
+        if self.loss_pause_until and datetime.now(IST) < self.loss_pause_until:
+            remaining = (self.loss_pause_until - datetime.now(IST)).seconds // 60
+            logger.warning(
+                "\u23f8 Circuit breaker active — %d min remaining (after %d consecutive losses)",
+                remaining, self.consecutive_losses,
+            )
+            return True
+        return False
 
     def check_position_size(self, price: float) -> int:
         """
@@ -251,6 +272,9 @@ class PaperTrader:
         if self.check_daily_loss_limit():
             return {"error": "Daily loss limit breached — no new trades allowed"}
 
+        if self.check_circuit_breaker():
+            return {"error": "Circuit breaker active — paused after 3 consecutive losses"}
+
         if self.check_max_positions():
             return {"error": f"Max positions ({self.max_positions}) reached"}
 
@@ -270,24 +294,30 @@ class PaperTrader:
         if target_price <= price:
             return {"error": "Target price must be above entry price"}
 
+        # ── Apply slippage (Fix #5) ──
+        adjusted_price = round(price * (1 + self.slippage_pct / 100), 2)
+        if adjusted_price != price:
+            logger.info("Slippage applied: ₹%.2f → ₹%.2f (+%.2f%%)", price, adjusted_price, self.slippage_pct)
+
         # ── Execute paper trade ──
         position = Position(
             symbol=symbol,
             instrument_key=instrument_key,
             quantity=quantity,
-            entry_price=price,
+            entry_price=adjusted_price,
             entry_time=datetime.now(IST),
             stop_loss=stop_loss,
             target_price=target_price,
             strategy=strategy,
             signal_context=signal_context or {},
-            highest_since_entry=price,
+            highest_since_entry=adjusted_price,
         )
 
         self.positions[symbol] = position
-        self.capital -= price * quantity  # Reserve capital
+        self.capital -= adjusted_price * quantity  # Reserve capital
 
-        # Save to DB
+        # Save to DB (Fix #6: always save signal_context)
+        ctx_json = json.dumps(signal_context) if signal_context else json.dumps({"raw_price": price, "adjusted_price": adjusted_price})
         with self._conn() as c:
             c.execute(
                 """
@@ -297,17 +327,16 @@ class PaperTrader:
                 VALUES (?, ?, 'BUY', ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    symbol, instrument_key, quantity, price,
+                    symbol, instrument_key, quantity, adjusted_price,
                     position.entry_time.isoformat(),
-                    stop_loss, target_price, strategy,
-                    json.dumps(signal_context) if signal_context else None,
+                    stop_loss, target_price, strategy, ctx_json,
                 ),
             )
             c.commit()
 
         logger.info(
-            "📈 PAPER BUY: %s × %d @ ₹%.2f (SL: ₹%.2f, TP: ₹%.2f)",
-            symbol, quantity, price, stop_loss, target_price,
+            "📈 PAPER BUY: %s × %d @ ₹%.2f (SL: ₹%.2f, TP: ₹%.2f) [raw: ₹%.2f]",
+            symbol, quantity, adjusted_price, stop_loss, target_price, price,
         )
 
         return {
@@ -315,7 +344,9 @@ class PaperTrader:
             "action": "BUY",
             "symbol": symbol,
             "quantity": quantity,
-            "price": price,
+            "price": adjusted_price,
+            "raw_price": price,
+            "slippage_applied": round(adjusted_price - price, 2),
             "stop_loss": stop_loss,
             "target_price": target_price,
             "capital_remaining": round(self.capital, 2),
@@ -342,12 +373,16 @@ class PaperTrader:
             return {"error": f"No open position in {symbol}"}
 
         position = self.positions[symbol]
-        pnl = (price - position.entry_price) * position.quantity
-        pnl_pct = ((price - position.entry_price) / position.entry_price) * 100
+
+        # Apply slippage on exit (Fix #5)
+        adjusted_price = round(price * (1 - self.slippage_pct / 100), 2)
+
+        pnl = (adjusted_price - position.entry_price) * position.quantity
+        pnl_pct = ((adjusted_price - position.entry_price) / position.entry_price) * 100
         is_win = 1 if pnl > 0 else 0
 
         # Update capital
-        self.capital += price * position.quantity
+        self.capital += adjusted_price * position.quantity
         self.daily_pnl += pnl
         self.total_pnl += pnl
         self.daily_trades += 1
@@ -356,13 +391,22 @@ class PaperTrader:
         if is_win:
             self.daily_wins += 1
             self.total_wins += 1
+            self.consecutive_losses = 0  # Reset streak
         else:
             self.daily_losses += 1
+            self.consecutive_losses += 1
+            # Circuit breaker: pause after 3 consecutive losses (Fix #4)
+            if self.consecutive_losses >= 3:
+                self.loss_pause_until = datetime.now(IST) + timedelta(minutes=30)
+                logger.warning(
+                    "\U0001f6d1 3 consecutive losses — circuit breaker activated, pausing until %s",
+                    self.loss_pause_until.strftime("%H:%M IST"),
+                )
 
         # Remove position
         del self.positions[symbol]
 
-        # Update DB
+        # Update DB (Fix #1: subquery instead of ORDER BY in UPDATE)
         exit_time = datetime.now(IST).isoformat()
         with self._conn() as c:
             c.execute(
@@ -370,18 +414,24 @@ class PaperTrader:
                 UPDATE paper_trades
                 SET exit_price = ?, exit_time = ?, pnl = ?, pnl_pct = ?,
                     is_win = ?, exit_reason = ?
-                WHERE symbol = ? AND exit_time IS NULL
-                ORDER BY id DESC LIMIT 1
+                WHERE id = (
+                    SELECT id FROM paper_trades
+                    WHERE symbol = ? AND exit_time IS NULL
+                    ORDER BY id DESC LIMIT 1
+                )
                 """,
-                (price, exit_time, round(pnl, 2), round(pnl_pct, 2),
+                (adjusted_price, exit_time, round(pnl, 2), round(pnl_pct, 2),
                  is_win, reason, symbol),
             )
             c.commit()
 
-        emoji = "✅" if is_win else "❌"
+        # Persist capital state after every trade (Fix #2)
+        self._save_capital_state()
+
+        emoji = "\u2705" if is_win else "\u274c"
         logger.info(
-            "%s PAPER SELL: %s × %d @ ₹%.2f → P&L: ₹%.2f (%.2f%%) [%s]",
-            emoji, symbol, position.quantity, price, pnl, pnl_pct, reason,
+            "%s PAPER SELL: %s × %d @ ₹%.2f → P&L: ₹%.2f (%.2f%%) [%s] [raw: ₹%.2f]",
+            emoji, symbol, position.quantity, adjusted_price, pnl, pnl_pct, reason, price,
         )
 
         return {
@@ -390,12 +440,15 @@ class PaperTrader:
             "symbol": symbol,
             "quantity": position.quantity,
             "entry_price": position.entry_price,
-            "exit_price": price,
+            "exit_price": adjusted_price,
+            "raw_exit_price": price,
+            "slippage_applied": round(price - adjusted_price, 2),
             "pnl": round(pnl, 2),
             "pnl_pct": round(pnl_pct, 2),
             "is_win": bool(is_win),
             "reason": reason,
             "capital": round(self.capital, 2),
+            "consecutive_losses": self.consecutive_losses,
         }
 
     # ── Tick handler (for WebSocket integration) ──────────────────────────
@@ -576,3 +629,93 @@ class PaperTrader:
                 ),
             )
             c.commit()
+
+    def _save_capital_state(self):
+        """Persist capital and stats to DB so state survives restarts (Fix #2)."""
+        today = datetime.now(IST).date().isoformat()
+        self._save_daily_snapshot(today)
+
+    def _load_state_from_db(self):
+        """
+        Restore state from DB on startup (Fix #2).
+        Recovers: open positions, capital, total P&L, today's stats.
+        """
+        with self._conn() as c:
+            # 1. Reload open positions
+            open_trades = c.execute(
+                """
+                SELECT symbol, instrument_key, quantity, entry_price,
+                       entry_time, stop_loss, target_price, strategy, signal_context
+                FROM paper_trades
+                WHERE exit_time IS NULL
+                ORDER BY id ASC
+                """
+            ).fetchall()
+
+            for row in open_trades:
+                ctx = {}
+                if row["signal_context"]:
+                    try:
+                        ctx = json.loads(row["signal_context"])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                pos = Position(
+                    symbol=row["symbol"],
+                    instrument_key=row["instrument_key"] or "",
+                    quantity=row["quantity"],
+                    entry_price=row["entry_price"],
+                    entry_time=datetime.fromisoformat(row["entry_time"]),
+                    stop_loss=row["stop_loss"] or 0,
+                    target_price=row["target_price"] or 0,
+                    strategy=row["strategy"] or "manual",
+                    signal_context=ctx,
+                    highest_since_entry=row["entry_price"],
+                )
+                self.positions[pos.symbol] = pos
+
+            # 2. Restore capital from latest portfolio snapshot
+            latest = c.execute(
+                "SELECT capital, total_pnl FROM paper_portfolio ORDER BY date DESC LIMIT 1"
+            ).fetchone()
+            if latest:
+                self.capital = latest["capital"]
+                self.total_pnl = latest["total_pnl"]
+
+            # 3. Restore total trades / wins from all completed trades
+            stats = c.execute(
+                """
+                SELECT COUNT(*) as total, COALESCE(SUM(is_win), 0) as wins
+                FROM paper_trades WHERE exit_time IS NOT NULL
+                """
+            ).fetchone()
+            if stats:
+                self.total_trades = stats["total"]
+                self.total_wins = stats["wins"]
+
+            # 4. Restore today's stats
+            today = datetime.now(IST).date().isoformat()
+            today_stats = c.execute(
+                """
+                SELECT COUNT(*) as cnt,
+                       COALESCE(SUM(CASE WHEN is_win = 1 THEN 1 ELSE 0 END), 0) as wins,
+                       COALESCE(SUM(CASE WHEN is_win = 0 THEN 1 ELSE 0 END), 0) as losses,
+                       COALESCE(SUM(pnl), 0) as pnl
+                FROM paper_trades
+                WHERE exit_time IS NOT NULL AND date(exit_time) = ?
+                """,
+                (today,)
+            ).fetchone()
+            if today_stats and today_stats["cnt"] > 0:
+                self.daily_trades = today_stats["cnt"]
+                self.daily_wins = today_stats["wins"]
+                self.daily_losses = today_stats["losses"]
+                self.daily_pnl = today_stats["pnl"]
+                self._last_reset_date = today
+
+        recovered = len(self.positions)
+        if recovered > 0 or self.total_trades > 0:
+            logger.info(
+                "\U0001f504 State recovered from DB: %d open positions, ₹%.2f capital, "
+                "%d total trades (%d wins)",
+                recovered, self.capital, self.total_trades, self.total_wins,
+            )

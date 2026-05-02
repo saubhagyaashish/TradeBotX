@@ -1,7 +1,7 @@
 // SchedulerCard — pre-market scheduler status + control panel
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { PlayCircle, Pause, Clock, RefreshCw, ChevronDown, Zap, Settings2, CheckCircle2, AlertCircle } from 'lucide-react'
+import { PlayCircle, Pause, Clock, RefreshCw, Zap, Settings2, CheckCircle2, AlertCircle } from 'lucide-react'
 
 const API = 'http://localhost:8000'
 
@@ -41,7 +41,7 @@ interface SchedulerStatus {
 
 export default function SchedulerCard() {
   const [status, setStatus] = useState<SchedulerStatus | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [_loading, setLoading] = useState(false)
   const [triggering, setTriggering] = useState(false)
   const [showConfig, setShowConfig] = useState(false)
   const [configTime, setConfigTime] = useState('08:30')

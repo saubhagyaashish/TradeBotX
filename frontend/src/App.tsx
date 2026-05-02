@@ -9,6 +9,7 @@ import AnalysisView from './components/AnalysisView'
 import ResultsView from './components/ResultsView'
 import WatchlistPanel from './components/WatchlistPanel'
 import PredictionsView from './components/PredictionsView'
+import PaperTradingView from './components/PaperTradingView'
 import type { Stock, ScreenResult, AnalysisResult, View } from './types'
 
 const API = 'http://localhost:8000'
@@ -118,7 +119,7 @@ export default function App() {
   }, [])
 
   // ── Nav link clicks ────────────────────────────────────────────────
-  const handleNav = useCallback((v: 'screener' | 'results' | 'watchlist' | 'predictions') => {
+  const handleNav = useCallback((v: 'screener' | 'results' | 'watchlist' | 'predictions' | 'paper') => {
     eventSourceRef.current?.close()
     setView(v)
   }, [])
@@ -134,6 +135,8 @@ export default function App() {
         <WatchlistPanel />
       ) : view === 'predictions' ? (
         <PredictionsView />
+      ) : view === 'paper' ? (
+        <PaperTradingView />
       ) : view === 'screener' ? (
         <ScreenerView
           indices={indices}
