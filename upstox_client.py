@@ -35,7 +35,7 @@ NIFTY_50_INSTRUMENTS: dict[str, str] = {
     "ITC": "NSE_EQ|INE154A01025",
     "SBIN": "NSE_EQ|INE062A01020",
     "BHARTIARTL": "NSE_EQ|INE397D01024",
-    "KOTAKBANK": "NSE_EQ|INE237A01028",
+    "KOTAKBANK": "NSE_EQ|INE237A01036",
     "LT": "NSE_EQ|INE018A01030",
     "AXISBANK": "NSE_EQ|INE238A01034",
     "WIPRO": "NSE_EQ|INE075A01022",
@@ -43,8 +43,8 @@ NIFTY_50_INSTRUMENTS: dict[str, str] = {
     "MARUTI": "NSE_EQ|INE585B01010",
     "TITAN": "NSE_EQ|INE280A01028",
     "SUNPHARMA": "NSE_EQ|INE044A01036",
-    "BAJFINANCE": "NSE_EQ|INE296A01024",
-    "BAJAJFINSV": "NSE_EQ|INE918I01018",
+    "BAJFINANCE": "NSE_EQ|INE296A01032",
+    "BAJAJFINSV": "NSE_EQ|INE918I01026",
     "HCLTECH": "NSE_EQ|INE860A01027",
     "TATAMOTORS": "NSE_EQ|INE155A01022",
     "NTPC": "NSE_EQ|INE733E01010",
@@ -57,24 +57,24 @@ NIFTY_50_INSTRUMENTS: dict[str, str] = {
     "ADANIENT": "NSE_EQ|INE423A01024",
     "ADANIPORTS": "NSE_EQ|INE742F01042",
     "COALINDIA": "NSE_EQ|INE522F01014",
-    "BPCL": "NSE_EQ|INE541A01028",
+    "BPCL": "NSE_EQ|INE029A01011",
     "GRASIM": "NSE_EQ|INE047A01021",
     "TECHM": "NSE_EQ|INE669C01036",
     "INDUSINDBK": "NSE_EQ|INE095A01012",
     "HINDALCO": "NSE_EQ|INE038A01020",
-    "DRREDDY": "NSE_EQ|INE089A01023",
+    "DRREDDY": "NSE_EQ|INE089A01031",
     "CIPLA": "NSE_EQ|INE059A01026",
     "DIVISLAB": "NSE_EQ|INE361B01024",
     "BRITANNIA": "NSE_EQ|INE216A01030",
     "EICHERMOT": "NSE_EQ|INE066A01021",
     "APOLLOHOSP": "NSE_EQ|INE437A01024",
-    "NESTLEIND": "NSE_EQ|INE239A01016",
+    "NESTLEIND": "NSE_EQ|INE239A01024",
     "SBILIFE": "NSE_EQ|INE123W01016",
     "HDFCLIFE": "NSE_EQ|INE795G01014",
     "TATACONSUM": "NSE_EQ|INE192A01025",
     "HEROMOTOCO": "NSE_EQ|INE158A01026",
     "BAJAJ-AUTO": "NSE_EQ|INE917I01010",
-    "SHRIRAMFIN": "NSE_EQ|INE721A01013",
+    "SHRIRAMFIN": "NSE_EQ|INE721A01047",
     "BEL": "NSE_EQ|INE263A01024",
 }
 
@@ -83,7 +83,7 @@ NIFTY_BANK_INSTRUMENTS: dict[str, str] = {
     "HDFCBANK": "NSE_EQ|INE040A01034",
     "ICICIBANK": "NSE_EQ|INE090A01021",
     "SBIN": "NSE_EQ|INE062A01020",
-    "KOTAKBANK": "NSE_EQ|INE237A01028",
+    "KOTAKBANK": "NSE_EQ|INE237A01036",
     "AXISBANK": "NSE_EQ|INE238A01034",
     "INDUSINDBK": "NSE_EQ|INE095A01012",
     "BANKBARODA": "NSE_EQ|INE028A01039",
@@ -159,6 +159,15 @@ class UpstoxClient:
         """Make a GET request, return parsed JSON."""
         client = await self._ensure_client()
         resp = await client.get(url, params=params)
+        if resp.status_code >= 400:
+            # 404 on intraday candles is expected when market is closed — keep quiet
+            log_fn = logger.debug if resp.status_code == 404 else logger.warning
+            log_fn(
+                "Upstox API %d for %s: %s",
+                resp.status_code,
+                url.split("/")[-1],
+                resp.text[:200],
+            )
         resp.raise_for_status()
         return resp.json()
 

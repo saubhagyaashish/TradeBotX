@@ -135,6 +135,40 @@ def get_login_url(config: UpstoxConfig) -> str:
     )
 
 
+def persist_token_to_env(new_token: str, env_path: str = ".env") -> bool:
+    """
+    Update UPSTOX_ACCESS_TOKEN in the .env file on disk.
+    This way a server restart will pick up the fresh token automatically.
+    Returns True on success.
+    """
+    import re
+    env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), env_path)
+    try:
+        with open(env_file, "r", encoding="utf-8") as fh:
+            content = fh.read()
+
+        if re.search(r"^UPSTOX_ACCESS_TOKEN=", content, re.MULTILINE):
+            content = re.sub(
+                r"^UPSTOX_ACCESS_TOKEN=.*$",
+                f"UPSTOX_ACCESS_TOKEN={new_token}",
+                content,
+                flags=re.MULTILINE,
+            )
+        else:
+            content += f"\nUPSTOX_ACCESS_TOKEN={new_token}\n"
+
+        with open(env_file, "w", encoding="utf-8") as fh:
+            fh.write(content)
+
+        # Also update the current process env so no restart is needed
+        os.environ["UPSTOX_ACCESS_TOKEN"] = new_token
+        logger.info("✅ Saved new access token to %s", env_path)
+        return True
+    except Exception as exc:
+        logger.error("❌ Failed to save token to %s: %s", env_path, exc)
+        return False
+
+
 async def exchange_code_for_token(
     config: UpstoxConfig, auth_code: str
 ) -> Optional[str]:

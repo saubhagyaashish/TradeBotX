@@ -666,22 +666,17 @@ export default function PaperTradingView() {
     } catch { /* silent */ }
   }, [])
 
-  // Fetch LTPs for current index
+  // Fetch LTPs for current index — single batch call instead of 50 individual ones
   const fetchQuotes = useCallback(async () => {
-    const results: Record<string, number> = {}
-    await Promise.allSettled(
-      symbols.map(async sym => {
-        try {
-          const r = await fetch(`${API}/api/upstox/ltp/${sym}`)
-          if (r.ok) {
-            const d = await r.json()
-            results[sym] = d.ltp
-          }
-        } catch { /* silent */ }
-      })
-    )
-    setQuotes(prev => ({ ...prev, ...results }))
-  }, [symbols])
+    try {
+      const indexParam = activeIndex === 'NIFTY 50' ? 'NIFTY50' : 'NIFTY_BANK'
+      const r = await fetch(`${API}/api/upstox/ltp/batch?index=${indexParam}`)
+      if (r.ok) {
+        const d = await r.json()
+        setQuotes(prev => ({ ...prev, ...(d.prices ?? {}) }))
+      }
+    } catch { /* silent */ }
+  }, [activeIndex])
 
   // Fetch signals one by one (heavy — only on demand)
   const fetchSignals = useCallback(async () => {

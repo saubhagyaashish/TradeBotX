@@ -23,7 +23,7 @@ import scheduler as sched
 import database as db
 
 # ── Upstox integration imports ────────────────────────────────────────────────
-from upstox_auth import load_config_from_env, validate_token, UpstoxConfig
+from upstox_auth import load_config_from_env, validate_token, UpstoxConfig, get_login_url, exchange_code_for_token, persist_token_to_env
 from upstox_client import (
     UpstoxClient,
     symbol_to_instrument_key,
@@ -772,6 +772,90 @@ async def upstox_status():
     }
 
 
+@app.get("/api/upstox/login")
+async def upstox_login():
+    """
+    Return the Upstox OAuth login URL.
+    Open this URL in a browser to authorize. After login, Upstox redirects
+    to /callback which automatically exchanges the code for a token.
+    """
+    if upstox_config is None or not upstox_config.api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="UPSTOX_API_KEY not set in .env — cannot generate login URL",
+        )
+    url = get_login_url(upstox_config)
+    return {"login_url": url, "instruction": "Open this URL in your browser to authorize"}
+
+
+@app.get("/callback")
+async def upstox_callback(code: str = Query(None)):
+    """
+    OAuth callback handler.
+    Upstox redirects here with ?code=xxx after the user authorizes.
+    Automatically exchanges the code for an access token, saves it to .env,
+    and reinitializes the Upstox client — no server restart needed.
+    """
+    global upstox_config, upstox_client
+
+    if not code:
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(
+            "<h2 style='color:red'>❌ No authorization code received</h2>"
+            "<p>Please try the login flow again.</p>",
+            status_code=400,
+        )
+
+    if upstox_config is None:
+        upstox_config = load_config_from_env()
+
+    if not upstox_config.api_key or not upstox_config.api_secret:
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(
+            "<h2 style='color:red'>❌ UPSTOX_API_KEY / UPSTOX_API_SECRET not set in .env</h2>",
+            status_code=500,
+        )
+
+    # Exchange auth code for access token
+    new_token = await exchange_code_for_token(upstox_config, code)
+
+    if not new_token:
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(
+            "<h2 style='color:red'>❌ Token exchange failed</h2>"
+            "<p>Check server logs for details. The authorization code may have expired.</p>",
+            status_code=500,
+        )
+
+    # Persist to .env so it survives server restarts
+    persist_token_to_env(new_token)
+
+    # Validate the fresh token
+    await validate_token(upstox_config)
+
+    # Reinitialize the Upstox client with the new token
+    if upstox_client:
+        await upstox_client.close()
+    upstox_client = UpstoxClient(upstox_config)
+    logging.info("♻️  Upstox client reinitialized with fresh token")
+
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(
+        f"""
+        <div style="font-family: system-ui; max-width: 500px; margin: 80px auto; text-align: center;">
+            <h1 style="color: #22c55e;">✅ Upstox Connected!</h1>
+            <p style="font-size: 1.1em;">Token saved and client reinitialized.</p>
+            <p><strong>User:</strong> {upstox_config.user_name or 'N/A'}</p>
+            <p><strong>Mode:</strong> {upstox_config.mode}</p>
+            <p style="color: #888; font-size: 0.9em;">
+                You can close this tab and return to TradeBotX.
+            </p>
+        </div>
+        """,
+        status_code=200,
+    )
+
+
 @app.get("/api/upstox/quote/{symbol}")
 async def upstox_quote(symbol: str):
     """Get full market quote for a symbol via Upstox."""
@@ -780,6 +864,23 @@ async def upstox_quote(symbol: str):
     if quote is None:
         raise HTTPException(status_code=404, detail=f"No quote found for {symbol}")
     return {"symbol": symbol, "quote": quote}
+
+
+@app.get("/api/upstox/ltp/batch")
+async def batch_ltp(index: str = Query("NIFTY50")):
+    """
+    Get LTP for all stocks in an index in a single API call (Fix #7).
+    Much faster than 47 individual calls.
+    """
+    client = _require_upstox()
+    if index.upper() in ("NIFTY50", "NIFTY 50"):
+        symbols = list(NIFTY_50_INSTRUMENTS.keys())
+    elif index.upper() in ("NIFTYBANK", "NIFTY BANK", "NIFTY_BANK"):
+        symbols = list(NIFTY_BANK_INSTRUMENTS.keys())
+    else:
+        symbols = list(ALL_INSTRUMENTS.keys())
+    prices = await client.get_batch_ltp(symbols)
+    return {"index": index, "count": len(prices), "prices": prices}
 
 
 @app.get("/api/upstox/ltp/{symbol}")
@@ -826,19 +927,28 @@ async def upstox_signals(
     client = _require_upstox()
 
     # Fetch daily candles (for RSI, MACD, EMA, Bollinger, ATR)
-    df = await client.get_candles_as_df(symbol, "days", "1", to_date, from_date)
+    try:
+        df = await client.get_candles_as_df(symbol, "days", "1", to_date, from_date)
+    except Exception as exc:
+        logging.warning("Could not fetch daily candles for %s: %s", symbol, exc)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to fetch candle data for {symbol}: {exc}",
+        )
+
     if df is None or len(df) < 50:
         raise HTTPException(
             status_code=400,
-            detail=f"Not enough candle data for {symbol} (need ≥50 days)",
+            detail=f"Not enough candle data for {symbol} (need ≥50 days, got {len(df) if df is not None else 0})",
         )
 
     # Try to fetch intraday 5-min candles (for VWAP + momentum)
+    # Note: returns 404 when market is closed (weekends/holidays) — this is normal
     intraday_df = None
     try:
         intraday_df = await client.get_intraday_candles_as_df(symbol, "5")
-    except Exception as exc:
-        logger.warning("Could not fetch intraday candles for %s: %s", symbol, exc)
+    except Exception:
+        pass  # Expected on weekends/holidays — signals work fine with daily data only
 
     signal = ta.generate_signal_score(df, intraday_df)
     return {"symbol": symbol, "signal": signal}
@@ -854,21 +964,6 @@ async def list_instruments():
     }
 
 
-@app.get("/api/upstox/ltp/batch")
-async def batch_ltp(index: str = Query("NIFTY50")):
-    """
-    Get LTP for all stocks in an index in a single API call (Fix #7).
-    Much faster than 47 individual calls.
-    """
-    client = _require_upstox()
-    if index.upper() in ("NIFTY50", "NIFTY 50"):
-        symbols = list(NIFTY_50_INSTRUMENTS.keys())
-    elif index.upper() in ("NIFTYBANK", "NIFTY BANK", "NIFTY_BANK"):
-        symbols = list(NIFTY_BANK_INSTRUMENTS.keys())
-    else:
-        symbols = list(ALL_INSTRUMENTS.keys())
-    prices = await client.get_batch_ltp(symbols)
-    return {"index": index, "count": len(prices), "prices": prices}
 
 
 @app.get("/api/upstox/movers")
